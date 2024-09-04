@@ -1,5 +1,5 @@
+use crate::config::Config;
 use crate::transport::http_client::IGHttpClient;
-use crate::config::{Config};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -55,7 +55,8 @@ impl Session {
             encrypted_password: false,
         };
 
-        let response: AuthResponse = self.client
+        let response: AuthResponse = self
+            .client
             .post("/session", &auth_request)
             .await
             .context("Failed to authenticate")?;
@@ -82,7 +83,10 @@ impl Session {
 
     pub fn get_auth_tokens(&self) -> Option<(&String, &String)> {
         self.auth_info.as_ref().map(|info| {
-            (&info.auth_response.cst, &info.auth_response.x_security_token)
+            (
+                &info.auth_response.cst,
+                &info.auth_response.x_security_token,
+            )
         })
     }
 }
@@ -91,8 +95,8 @@ impl Session {
 mod tests_session {
     use super::*;
     use mockito::Server;
-    use std::time::Duration;
     use pretty_assertions::assert_eq;
+    use std::time::Duration;
 
     fn create_test_config(server_url: &str) -> Config {
         let mut config = Config::new();
@@ -111,7 +115,8 @@ mod tests_session {
             .mock("POST", "/session")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"
+            .with_body(
+                r#"
                 {
                     "client_token": "test_client_token",
                     "account_token": "test_account_token",
@@ -119,7 +124,8 @@ mod tests_session {
                     "cst": "test_cst",
                     "x_security_token": "test_x_security_token"
                 }
-            "#)
+            "#,
+            )
             .create_async()
             .await;
 
@@ -134,7 +140,10 @@ mod tests_session {
         if let Some(auth_info) = &session.auth_info {
             assert_eq!(auth_info.auth_response.client_token, "test_client_token");
             assert_eq!(auth_info.auth_response.cst, "test_cst");
-            assert_eq!(auth_info.auth_response.x_security_token, "test_x_security_token");
+            assert_eq!(
+                auth_info.auth_response.x_security_token,
+                "test_x_security_token"
+            );
         }
 
         mock.assert_async().await;
@@ -168,7 +177,8 @@ mod tests_session {
             .mock("POST", "/session")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"
+            .with_body(
+                r#"
                 {
                     "client_token": "test_client_token",
                     "account_token": "test_account_token",
@@ -176,7 +186,8 @@ mod tests_session {
                     "cst": "test_cst",
                     "x_security_token": "test_x_security_token"
                 }
-            "#)
+            "#,
+            )
             .create_async()
             .await;
 
@@ -198,7 +209,8 @@ mod tests_session {
             .mock("POST", "/session")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"
+            .with_body(
+                r#"
                 {
                     "client_token": "test_client_token",
                     "account_token": "test_account_token",
@@ -206,7 +218,8 @@ mod tests_session {
                     "cst": "test_cst",
                     "x_security_token": "test_x_security_token"
                 }
-            "#)
+            "#,
+            )
             .expect(1)
             .create_async()
             .await;
@@ -228,7 +241,8 @@ mod tests_session {
             .mock("POST", "/session")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"
+            .with_body(
+                r#"
                 {
                     "client_token": "test_client_token",
                     "account_token": "test_account_token",
@@ -236,7 +250,8 @@ mod tests_session {
                     "cst": "test_cst",
                     "x_security_token": "test_x_security_token"
                 }
-            "#)
+            "#,
+            )
             .expect(2)
             .create_async()
             .await;
@@ -259,7 +274,8 @@ mod tests_session {
             .mock("POST", "/session")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"
+            .with_body(
+                r#"
                 {
                     "client_token": "test_client_token",
                     "account_token": "test_account_token",
@@ -267,7 +283,8 @@ mod tests_session {
                     "cst": "test_cst",
                     "x_security_token": "test_x_security_token"
                 }
-            "#)
+            "#,
+            )
             .create_async()
             .await;
 

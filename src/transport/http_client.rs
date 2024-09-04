@@ -109,7 +109,6 @@ impl IGHttpClient {
     }
 }
 
-
 #[cfg(test)]
 mod tests_ig_http_client {
     use super::*;
@@ -160,7 +159,10 @@ mod tests_ig_http_client {
         let result: Result<TestResponse> = client.get("/test").await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("API request failed"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("API request failed"));
         mock.assert_async().await;
     }
 
@@ -176,7 +178,9 @@ mod tests_ig_http_client {
             .await;
 
         let client = IGHttpClient::new(&server.url(), "test_api_key").unwrap();
-        let body = TestResponse { message: "test".to_string() };
+        let body = TestResponse {
+            message: "test".to_string(),
+        };
         let response: TestResponse = client.post("/test", &body).await.unwrap();
 
         assert_eq!(response.message, "created");
@@ -194,11 +198,16 @@ mod tests_ig_http_client {
             .await;
 
         let client = IGHttpClient::new(&server.url(), "test_api_key").unwrap();
-        let body = TestResponse { message: "test".to_string() };
+        let body = TestResponse {
+            message: "test".to_string(),
+        };
         let result: Result<TestResponse> = client.post("/test", &body).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("API request failed"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("API request failed"));
         mock.assert_async().await;
     }
 }

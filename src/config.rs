@@ -1,8 +1,8 @@
-use std::env;
-use std::str::FromStr;
-use std::fmt::Debug;
-use tracing::error;
 use serde::Deserialize;
+use std::env;
+use std::fmt::Debug;
+use std::str::FromStr;
+use tracing::error;
 
 #[derive(Debug, Deserialize)]
 pub struct Credentials {
@@ -31,6 +31,12 @@ where
     }
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Config {
     pub fn new() -> Self {
         Config {
@@ -39,7 +45,10 @@ impl Config {
                 password: get_env_or_default("IG_PASSWORD", String::from("default_password")),
                 api_key: get_env_or_default("IG_API_KEY", String::from("default_api_key")),
             },
-            base_url: get_env_or_default("IG_BASE_URL", String::from("https://demo-api.ig.com/gateway/deal")),
+            base_url: get_env_or_default(
+                "IG_BASE_URL",
+                String::from("https://demo-api.ig.com/gateway/deal"),
+            ),
             timeout: get_env_or_default("IG_TIMEOUT", 30),
         }
     }
@@ -51,10 +60,16 @@ mod tests {
 
     #[test]
     fn test_get_env_or_default() {
-        assert_eq!(get_env_or_default::<String>("TEST_VAR_1", "default".to_string()), "default");
+        assert_eq!(
+            get_env_or_default::<String>("TEST_VAR_1", "default".to_string()),
+            "default"
+        );
 
         env::set_var("TEST_VAR_2", "env_value");
-        assert_eq!(get_env_or_default::<String>("TEST_VAR_2", "default".to_string()), "env_value");
+        assert_eq!(
+            get_env_or_default::<String>("TEST_VAR_2", "default".to_string()),
+            "env_value"
+        );
 
         env::set_var("TEST_VAR_3", "not_a_number");
         assert_eq!(get_env_or_default::<i32>("TEST_VAR_3", 42), 42);

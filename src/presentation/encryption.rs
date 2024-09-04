@@ -1,10 +1,9 @@
-
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
     Aes256Gcm, Key, Nonce,
 };
 use anyhow::{Context, Result};
-use base64::{Engine, engine::general_purpose};
+use base64::{engine::general_purpose, Engine};
 use rand::RngCore;
 
 const NONCE_LENGTH: usize = 12;
@@ -24,7 +23,8 @@ impl Encryptor {
         OsRng.fill_bytes(&mut nonce);
         let nonce = Nonce::from_slice(&nonce);
 
-        let ciphertext = self.cipher
+        let ciphertext = self
+            .cipher
             .encrypt(nonce, plaintext.as_bytes())
             .map_err(|e| anyhow::anyhow!("Encryption failed: {:?}", e))?;
 
@@ -33,7 +33,9 @@ impl Encryptor {
         Ok(general_purpose::STANDARD.encode(&result))
     }
     pub fn decrypt(&self, ciphertext: &str) -> Result<String> {
-        let ciphertext = general_purpose::STANDARD.decode(ciphertext).context("Failed to decode base64")?;
+        let ciphertext = general_purpose::STANDARD
+            .decode(ciphertext)
+            .context("Failed to decode base64")?;
         if ciphertext.len() < NONCE_LENGTH {
             anyhow::bail!("Ciphertext is too short");
         }
@@ -41,7 +43,8 @@ impl Encryptor {
         let (nonce, ciphertext) = ciphertext.split_at(NONCE_LENGTH);
         let nonce = Nonce::from_slice(nonce);
 
-        let plaintext = self.cipher
+        let plaintext = self
+            .cipher
             .decrypt(nonce, ciphertext)
             .map_err(|e| anyhow::anyhow!("Decryption failed: {:?}", e))?;
 

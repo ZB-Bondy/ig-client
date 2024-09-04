@@ -1,6 +1,5 @@
-
-use serde::{Serialize, Deserialize};
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 
 pub trait Serializable: Serialize + for<'de> Deserialize<'de> {}
 
@@ -10,25 +9,22 @@ pub struct Serializer;
 
 impl Serializer {
     pub fn to_json<T: Serializable>(value: &T) -> Result<String> {
-        serde_json::to_string(value)
-            .context("Failed to serialize to JSON")
+        serde_json::to_string(value).context("Failed to serialize to JSON")
     }
 
     pub fn from_json<T: Serializable>(json: &str) -> Result<T> {
-        serde_json::from_str(json)
-            .context("Failed to deserialize from JSON")
+        serde_json::from_str(json).context("Failed to deserialize from JSON")
     }
 
     pub fn to_json_pretty<T: Serializable>(value: &T) -> Result<String> {
-        serde_json::to_string_pretty(value)
-            .context("Failed to serialize to pretty JSON")
+        serde_json::to_string_pretty(value).context("Failed to serialize to pretty JSON")
     }
 }
 
 #[cfg(test)]
 mod tests_serializer {
     use super::*;
-    use serde::{Serialize, Deserialize};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct TestStruct {
@@ -57,7 +53,6 @@ mod tests_serializer {
         };
 
         let json = Serializer::to_json_pretty(&test_struct).unwrap();
-
 
         assert!(json.contains("\n"));
         assert!(json.contains("  "));
