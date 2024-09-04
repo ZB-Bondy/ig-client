@@ -37,7 +37,7 @@ struct AuthInfo {
 
 impl Session {
     pub fn new(config: Config) -> Result<Self> {
-        let client = IGHttpClient::new(&config.base_url, &config.credentials.api_key)?;
+        let client = IGHttpClient::new(&config.rest_api.base_url, &config.credentials.api_key)?;
         Ok(Self {
             client,
             config,
@@ -63,7 +63,7 @@ impl Session {
 
         self.auth_info = Some(AuthInfo {
             auth_response: response,
-            expires_at: Instant::now() + Duration::from_secs(self.config.timeout),
+            expires_at: Instant::now() + Duration::from_secs(self.config.rest_api.timeout),
         });
 
         debug!("Authentication successful");
@@ -100,11 +100,11 @@ mod tests_session {
 
     fn create_test_config(server_url: &str) -> Config {
         let mut config = Config::new();
-        config.base_url = server_url.to_string();
+        config.rest_api.base_url = server_url.to_string();
         config.credentials.username = "test_user".to_string();
         config.credentials.password = "test_password".to_string();
         config.credentials.api_key = "test_api_key".to_string();
-        config.timeout = 3600; // 1 hora
+        config.rest_api.timeout = 3600; // 1 hora
         config
     }
 
@@ -257,7 +257,7 @@ mod tests_session {
             .await;
 
         let mut config = create_test_config(&server.url());
-        config.timeout = 1; // Set timeout to 1 second for testing
+        config.rest_api.timeout = 1; // Set timeout to 1 second for testing
         let mut session = Session::new(config).unwrap();
 
         session.authenticate().await.unwrap();

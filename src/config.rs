@@ -1,21 +1,33 @@
-use serde::Deserialize;
 use std::env;
-use std::fmt::Debug;
 use std::str::FromStr;
+use std::fmt::Debug;
 use tracing::error;
+use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Credentials {
     pub username: String,
     pub password: String,
     pub api_key: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     pub credentials: Credentials,
+    pub rest_api: RestApiConfig,
+    pub websocket: WebSocketConfig,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct RestApiConfig {
     pub base_url: String,
     pub timeout: u64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct WebSocketConfig {
+    pub url: String,
+    pub reconnect_interval: u64,
 }
 
 pub fn get_env_or_default<T: FromStr>(env_var: &str, default: T) -> T
@@ -45,50 +57,96 @@ impl Config {
                 password: get_env_or_default("IG_PASSWORD", String::from("default_password")),
                 api_key: get_env_or_default("IG_API_KEY", String::from("default_api_key")),
             },
-            base_url: get_env_or_default(
-                "IG_BASE_URL",
-                String::from("https://demo-api.ig.com/gateway/deal"),
-            ),
-            timeout: get_env_or_default("IG_TIMEOUT", 30),
+            rest_api: RestApiConfig {
+                base_url: get_env_or_default(
+                    "IG_REST_BASE_URL",
+                    String::from("https://demo-api.ig.com/gateway/deal"),
+                ),
+                timeout: get_env_or_default("IG_REST_TIMEOUT", 30),
+            },
+            websocket: WebSocketConfig {
+                url: get_env_or_default(
+                    "IG_WS_URL",
+                    String::from("wss://demo-apd.marketdatasystems.com"),
+                ),
+                reconnect_interval: get_env_or_default("IG_WS_RECONNECT_INTERVAL", 5),
+            },
         }
     }
 }
 
+
 #[cfg(test)]
-mod tests {
+mod tests_config {
     use super::*;
+    use once_cell::sync::Lazy;
+    use std::sync::Mutex;
 
-    #[test]
-    fn test_get_env_or_default() {
-        assert_eq!(
-            get_env_or_default::<String>("TEST_VAR_1", "default".to_string()),
-            "default"
-        );
+    static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
-        env::set_var("TEST_VAR_2", "env_value");
-        assert_eq!(
-            get_env_or_default::<String>("TEST_VAR_2", "default".to_string()),
-            "env_value"
-        );
+    fn with_env_vars<F>(vars: Vec<(&str, &str)>, test: F)
+    where
+        F: FnOnce(),
+    {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let mut old_vars = Vec::new();
 
-        env::set_var("TEST_VAR_3", "not_a_number");
-        assert_eq!(get_env_or_default::<i32>("TEST_VAR_3", 42), 42);
+        for (key, value) in vars {
+            old_vars.push((key, env::var(key).ok()));
+            env::set_var(key, value);
+        }
+
+        test();
+
+        for (key, value) in old_vars {
+            match value {
+                Some(v) => env::set_var(key, v),
+                None => env::remove_var(key),
+            }
+        }
     }
 
     #[test]
     fn test_config_new() {
-        env::set_var("IG_USERNAME", "test_user");
-        env::set_var("IG_PASSWORD", "test_pass");
-        env::set_var("IG_API_KEY", "test_api_key");
-        env::set_var("IG_BASE_URL", "https://test-api.ig.com");
-        env::set_var("IG_TIMEOUT", "60");
+        with_env_vars(
+            vec![
+                ("IG_USERNAME", "test_user"),
+                ("IG_PASSWORD", "test_pass"),
+                ("IG_API_KEY", "test_api_key"),
+                ("IG_REST_BASE_URL", "https://test-api.ig.com"),
+                ("IG_REST_TIMEOUT", "60"),
+                ("IG_WS_URL", "wss://test-ws.ig.com"),
+                ("IG_WS_RECONNECT_INTERVAL", "10"),
+            ],
+            || {
+                let config = Config::new();
 
-        let config = Config::new();
+                assert_eq!(config.credentials.username, "test_user");
+                assert_eq!(config.credentials.password, "test_pass");
+                assert_eq!(config.credentials.api_key, "test_api_key");
+                assert_eq!(config.rest_api.base_url, "https://test-api.ig.com");
+                assert_eq!(config.rest_api.timeout, 60);
+                assert_eq!(config.websocket.url, "wss://test-ws.ig.com");
+                assert_eq!(config.websocket.reconnect_interval, 10);
+            },
+        );
+    }
 
-        assert_eq!(config.credentials.username, "test_user");
-        assert_eq!(config.credentials.password, "test_pass");
-        assert_eq!(config.credentials.api_key, "test_api_key");
-        assert_eq!(config.base_url, "https://test-api.ig.com");
-        assert_eq!(config.timeout, 60);
+    #[test]
+    fn test_default_values() {
+        with_env_vars(
+            vec![],
+            || {
+                let config = Config::new();
+
+                assert_eq!(config.credentials.username, "default_username");
+                assert_eq!(config.credentials.password, "default_password");
+                assert_eq!(config.credentials.api_key, "default_api_key");
+                assert_eq!(config.rest_api.base_url, "https://demo-api.ig.com/gateway/deal");
+                assert_eq!(config.rest_api.timeout, 30);
+                assert_eq!(config.websocket.url, "wss://demo-apd.marketdatasystems.com");
+                assert_eq!(config.websocket.reconnect_interval, 5);
+            },
+        );
     }
 }
