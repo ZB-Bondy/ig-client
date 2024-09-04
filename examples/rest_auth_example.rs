@@ -1,44 +1,40 @@
 /******************************************************************************
-    Author: Joaquín Béjar García
-    Email: jb@taunais.com 
-    Date: 4/9/24
- ******************************************************************************/
+   Author: Joaquín Béjar García
+   Email: jb@taunais.com
+   Date: 4/9/24
+******************************************************************************/
+
+use anyhow::Result;
 use ig_client::config::Config;
 use ig_client::session::auth::Session;
-use anyhow::Result;
+use ig_client::utils::logger::setup_logger;
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize the logger
-    tracing_subscriber::fmt::init();
+    setup_logger();
 
-    // Load the configuration
     let config = Config::new();
 
-    // Create a session
     let mut session = Session::new(config)?;
 
-    // Authenticate (using v3 by default)
-    match session.authenticate(3).await {
+    match session.authenticate(2).await {
         Ok(()) => {
-            println!("REST API authentication successful");
-
-            // Example: Make an authenticated request
-            if let Some((auth_header, account_header)) = session.get_auth_headers() {
-                // Use these headers in your HTTP client for subsequent requests
-                println!("Auth Header: {}", auth_header);
-                println!("Account Header: {}", account_header);
-
-                // Here you would make your authenticated request
-                // For example:
-                // let balance = get_account_balance(&session).await?;
-                // println!("Account balance: {}", balance);
-            }
-        },
+            info!("REST API authentication successful");
+        }
         Err(e) => {
-            eprintln!("REST API authentication error: {:?}", e);
+            error!("REST API authentication error: {:?}", e);
         }
     }
+
+    // match session.get_session_details(false).await {
+    //     Ok(ar) => {
+    //         info!("Account details: {:?}", ar);
+    //     }
+    //     Err(e) => {
+    //         error!("REST API get_session_details error: {:?}", e);
+    //     }
+    // }
 
     Ok(())
 }

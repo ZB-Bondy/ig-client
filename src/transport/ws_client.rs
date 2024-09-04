@@ -1,8 +1,8 @@
 /******************************************************************************
-    Author: Joaquín Béjar García
-    Email: jb@taunais.com 
-    Date: 4/9/24
- ******************************************************************************/
+   Author: Joaquín Béjar García
+   Email: jb@taunais.com
+   Date: 4/9/24
+******************************************************************************/
 
 use crate::config::{Config, WebSocketConfig};
 use anyhow::{Context, Result};
@@ -20,7 +20,7 @@ pub struct WSClient {
 
 impl WSClient {
     pub fn new(config: &Config) -> (Arc<Self>, mpsc::Receiver<String>) {
-        let (tx, rx) = mpsc::channel(100); 
+        let (tx, rx) = mpsc::channel(100);
         (
             Arc::new(Self {
                 config: config.websocket.clone(),
@@ -56,7 +56,9 @@ impl WSClient {
         let (_outgoing_tx, mut outgoing_rx) = mpsc::channel(100);
         let write_future = async move {
             while let Some(message) = outgoing_rx.recv().await {
-                write.send(Message::Text(message)).await
+                write
+                    .send(Message::Text(message))
+                    .await
                     .context("Failed to send message")?;
             }
             Ok::<_, anyhow::Error>(())
@@ -83,13 +85,18 @@ impl WSClient {
     #[instrument(skip(self, read))]
     async fn handle_incoming(
         &self,
-        mut read: futures_util::stream::SplitStream<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>,
+        mut read: futures_util::stream::SplitStream<
+            WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+        >,
     ) -> Result<()> {
         while let Some(message) = read.next().await {
             match message {
                 Ok(Message::Text(text)) => {
                     debug!("Received message: {}", text);
-                    self.tx.send(text).await.context("Failed to send message to channel")?;
+                    self.tx
+                        .send(text)
+                        .await
+                        .context("Failed to send message to channel")?;
                 }
                 Ok(Message::Binary(data)) => {
                     debug!("Received binary data of length: {}", data.len());
@@ -120,11 +127,13 @@ impl WSClient {
     }
 
     pub async fn send(&self, message: String) -> Result<()> {
-        self.tx.send(message).await.context("Failed to send message to WebSocket")?;
+        self.tx
+            .send(message)
+            .await
+            .context("Failed to send message to WebSocket")?;
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod tests_ws_client {
@@ -143,7 +152,10 @@ mod tests_ws_client {
 
             while let Some(Ok(message)) = read.next().await {
                 if let Message::Text(text) = message {
-                    write.send(Message::Text(format!("Echo: {}", text))).await.unwrap();
+                    write
+                        .send(Message::Text(format!("Echo: {}", text)))
+                        .await
+                        .unwrap();
                 }
             }
         });

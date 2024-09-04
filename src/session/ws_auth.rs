@@ -1,18 +1,18 @@
 /******************************************************************************
-    Author: Joaquín Béjar García
-    Email: jb@taunais.com 
-    Date: 4/9/24
- ******************************************************************************/
+   Author: Joaquín Béjar García
+   Email: jb@taunais.com
+   Date: 4/9/24
+******************************************************************************/
 
 use crate::config::Config;
 use crate::transport::ws_client::WSClient;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, instrument};
-use std::future::Future;
-use std::pin::Pin;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct WSAuthRequest {
@@ -69,7 +69,9 @@ impl WSAuthSession {
 
         debug!("Sending auth request: {}", auth_request_json);
 
-        self.client.send(auth_request_json).await
+        self.client
+            .send(auth_request_json)
+            .await
             .context("Failed to send WebSocket auth request")?;
 
         debug!("Waiting for auth response");
@@ -82,12 +84,16 @@ impl WSAuthSession {
                     match response.status.as_str() {
                         "success" => {
                             debug!("WebSocket authentication successful");
-                            return Ok(response.session_id
-                                .context("No session ID in successful auth response")?);
+                            return response
+                                .session_id
+                                .context("No session ID in successful auth response");
                         }
                         _ => {
                             error!("WebSocket authentication failed: {}", response.status);
-                            return Err(anyhow::anyhow!("WebSocket authentication failed: {}", response.status));
+                            return Err(anyhow::anyhow!(
+                                "WebSocket authentication failed: {}",
+                                response.status
+                            ));
                         }
                     }
                 }
@@ -103,16 +109,15 @@ impl WSAuthSession {
         }
 
         error!("WebSocket connection closed during authentication");
-        Err(anyhow::anyhow!("WebSocket connection closed during authentication"))
+        Err(anyhow::anyhow!(
+            "WebSocket connection closed during authentication"
+        ))
     }
 
     pub fn get_client(&self) -> Arc<dyn WebSocketClient> {
         self.client.clone()
     }
 }
-
-
-
 
 //
 // #[cfg(test)]

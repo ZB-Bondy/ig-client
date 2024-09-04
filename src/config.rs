@@ -1,9 +1,10 @@
-use std::env;
-use std::str::FromStr;
-use std::fmt::Debug;
-use tracing::error;
 use serde::Deserialize;
+use std::env;
+use std::fmt::Debug;
+use std::str::FromStr;
+use tracing::error;
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Clone)]
 pub struct Credentials {
     pub username: String,
@@ -81,7 +82,6 @@ impl Config {
     }
 }
 
-
 #[cfg(test)]
 mod tests_config {
     use super::*;
@@ -140,19 +140,19 @@ mod tests_config {
 
     #[test]
     fn test_default_values() {
-        with_env_vars(
-            vec![],
-            || {
-                let config = Config::new();
+        with_env_vars(vec![], || {
+            let config = Config::new();
 
-                assert_eq!(config.credentials.username, "default_username");
-                assert_eq!(config.credentials.password, "default_password");
-                assert_eq!(config.credentials.api_key, "default_api_key");
-                assert_eq!(config.rest_api.base_url, "https://demo-api.ig.com/gateway/deal");
-                assert_eq!(config.rest_api.timeout, 30);
-                assert_eq!(config.websocket.url, "wss://demo-apd.marketdatasystems.com");
-                assert_eq!(config.websocket.reconnect_interval, 5);
-            },
-        );
+            assert_eq!(config.credentials.username, "default_username");
+            assert_eq!(config.credentials.password, "default_password");
+            assert_eq!(config.credentials.api_key, "default_api_key");
+            assert_eq!(
+                config.rest_api.base_url,
+                "https://demo-api.ig.com/gateway/deal"
+            );
+            assert_eq!(config.rest_api.timeout, 30);
+            assert_eq!(config.websocket.url, "wss://demo-apd.marketdatasystems.com");
+            assert_eq!(config.websocket.reconnect_interval, 5);
+        });
     }
 }

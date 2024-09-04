@@ -1,14 +1,13 @@
 /******************************************************************************
-    Author: Joaquín Béjar García
-    Email: jb@taunais.com 
-    Date: 4/9/24
- ******************************************************************************/
+   Author: Joaquín Béjar García
+   Email: jb@taunais.com
+   Date: 4/9/24
+******************************************************************************/
 
+use anyhow::Result;
 use ig_client::config::Config;
 use ig_client::session::ws_auth::WSAuthSession;
 use std::sync::Arc;
-use tokio;
-use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -30,14 +29,16 @@ async fn main() -> Result<()> {
             let ws_client = ws_auth_session.get_client();
 
             // Example: send a message after authentication
-            ws_client.send("Post-authentication test message".to_string()).await?;
+            ws_client
+                .send("Post-authentication test message".to_string())
+                .await?;
 
             // Here you could implement a loop to handle incoming messages
             // For example:
             // while let Some(message) = rx.recv().await {
             //     println!("Received message: {}", message);
             // }
-        },
+        }
         Err(e) => {
             eprintln!("Authentication error: {:?}", e);
         }
