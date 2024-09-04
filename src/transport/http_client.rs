@@ -5,6 +5,7 @@ use std::time::Duration;
 use tracing::{debug, error, instrument};
 
 /// Represents the HTTP client for interacting with the IG API.
+#[derive(Debug)]
 pub struct IGHttpClient {
     client: Client,
     base_url: String,
@@ -112,7 +113,7 @@ impl IGHttpClient {
 #[cfg(test)]
 mod tests_ig_http_client {
     use super::*;
-    use mockito::{Server, ServerGuard};
+    use mockito::Server;
     use pretty_assertions::assert_eq;
     use serde::{Deserialize, Serialize};
 
