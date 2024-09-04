@@ -20,7 +20,7 @@ pub struct WSClient {
 
 impl WSClient {
     pub fn new(config: &Config) -> (Arc<Self>, mpsc::Receiver<String>) {
-        let (tx, rx) = mpsc::channel(100); // Buffer de 100 mensajes
+        let (tx, rx) = mpsc::channel(100); 
         (
             Arc::new(Self {
                 config: config.websocket.clone(),

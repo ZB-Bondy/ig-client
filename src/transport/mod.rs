@@ -1,2 +1,2 @@
-pub(crate) mod http_client;
-mod ws_client;
+pub mod http_client;
+pub(crate) mod ws_client;

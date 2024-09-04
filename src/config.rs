@@ -8,7 +8,10 @@ use serde::Deserialize;
 pub struct Credentials {
     pub username: String,
     pub password: String,
+    pub(crate) account_id: String,
     pub api_key: String,
+    pub(crate) client_token: Option<String>,
+    pub(crate) account_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -55,7 +58,10 @@ impl Config {
             credentials: Credentials {
                 username: get_env_or_default("IG_USERNAME", String::from("default_username")),
                 password: get_env_or_default("IG_PASSWORD", String::from("default_password")),
+                account_id: get_env_or_default("IG_ACCOUNT_ID", String::from("default_account_id")),
                 api_key: get_env_or_default("IG_API_KEY", String::from("default_api_key")),
+                client_token: None,
+                account_token: None,
             },
             rest_api: RestApiConfig {
                 base_url: get_env_or_default(
