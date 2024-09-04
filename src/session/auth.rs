@@ -12,6 +12,7 @@ struct AuthRequest {
     encrypted_password: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct AuthResponse {
     pub client_token: String,
