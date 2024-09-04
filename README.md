@@ -1,6 +1,6 @@
-<div style="text-align: center;">
-  <img src="doc/images/logo.png" alt="IG Client" style="width: 50%; height: 200px;">
-</div>
+<p align="center">
+  <img src="doc/images/logo.png" alt="IG Client" width="50%" height="200">
+</p>
 
 [![Dual License](https://img.shields.io/badge/license-MIT%20and%20Apache%202.0-blue)](LICENSE)
 [![Crates.io](https://img.shields.io/crates/v/ig-client.svg)](https://crates.io/crates/ig-client)
