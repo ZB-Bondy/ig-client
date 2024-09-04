@@ -107,3 +107,97 @@ impl IGHttpClient {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests_ig_http_client {
+    use super::*;
+    use mockito::{Server, ServerGuard};
+    use pretty_assertions::assert_eq;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    struct TestResponse {
+        message: String,
+    }
+
+    #[tokio::test]
+    async fn test_new_client() {
+        let client = IGHttpClient::new("https://api.ig.com", "test_api_key");
+        assert!(client.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_request_success() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/test")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"message": "success"}"#)
+            .create_async()
+            .await;
+
+        let client = IGHttpClient::new(&server.url(), "test_api_key").unwrap();
+        let response: TestResponse = client.get("/test").await.unwrap();
+
+        assert_eq!(response.message, "success");
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_get_request_failure() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/test")
+            .with_status(404)
+            .with_body("Not Found")
+            .create_async()
+            .await;
+
+        let client = IGHttpClient::new(&server.url(), "test_api_key").unwrap();
+        let result: Result<TestResponse> = client.get("/test").await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("API request failed"));
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_post_request_success() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/test")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"message": "created"}"#)
+            .create_async()
+            .await;
+
+        let client = IGHttpClient::new(&server.url(), "test_api_key").unwrap();
+        let body = TestResponse { message: "test".to_string() };
+        let response: TestResponse = client.post("/test", &body).await.unwrap();
+
+        assert_eq!(response.message, "created");
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_post_request_failure() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/test")
+            .with_status(400)
+            .with_body("Bad Request")
+            .create_async()
+            .await;
+
+        let client = IGHttpClient::new(&server.url(), "test_api_key").unwrap();
+        let body = TestResponse { message: "test".to_string() };
+        let result: Result<TestResponse> = client.post("/test", &body).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("API request failed"));
+        mock.assert_async().await;
+    }
+}
