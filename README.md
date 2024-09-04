@@ -1,9 +1,11 @@
 <p align="center">
-  <img src="doc/images/logo.png" alt="IG Client" width="600" height="300">
+  <img src="doc/images/logo.png" alt="IG Client" width="400" height="200">
 </p>
 <p style="text-align:center">
   <img src="doc/images/logo.png" alt="IG Client" width="50%" />
 </p>
+
+![IG Client](doc/images/logo.png)
 
 
 [![Dual License](https://img.shields.io/badge/license-MIT%20and%20Apache%202.0-blue)](LICENSE)
