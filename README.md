@@ -1,5 +1,5 @@
 <div style="text-align: center;">
-  <img src="doc/images/logo.png" alt="IG Client" style="width: 100%; height: 200px;">
+  <img src="doc/images/logo.png" alt="IG Client" style="width: 50%; height: 100px;">
 </div>
 
 [![Dual License](https://img.shields.io/badge/license-MIT%20and%20Apache%202.0-blue)](LICENSE)

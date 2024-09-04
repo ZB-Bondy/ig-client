@@ -8,7 +8,7 @@ impl<T> Serializable for T where T: Serialize + for<'de> Deserialize<'de> {}
 pub struct Serializer;
 
 impl Serializer {
-    pub fn to_json<T: Serializable>(value: &T) -> Result<String> {
+    pub fn json<T: Serializable>(value: &T) -> Result<String> {
         serde_json::to_string(value).context("Failed to serialize to JSON")
     }
 
@@ -16,7 +16,7 @@ impl Serializer {
         serde_json::from_str(json).context("Failed to deserialize from JSON")
     }
 
-    pub fn to_json_pretty<T: Serializable>(value: &T) -> Result<String> {
+    pub fn json_pretty<T: Serializable>(value: &T) -> Result<String> {
         serde_json::to_string_pretty(value).context("Failed to serialize to pretty JSON")
     }
 }
@@ -39,7 +39,7 @@ mod tests_serializer {
             name: "Test".to_string(),
         };
 
-        let json = Serializer::to_json(&test_struct).unwrap();
+        let json = Serializer::json(&test_struct).unwrap();
         let deserialized: TestStruct = Serializer::from_json(&json).unwrap();
 
         assert_eq!(test_struct, deserialized);
@@ -52,7 +52,7 @@ mod tests_serializer {
             name: "Test".to_string(),
         };
 
-        let json = Serializer::to_json_pretty(&test_struct).unwrap();
+        let json = Serializer::json_pretty(&test_struct).unwrap();
 
         assert!(json.contains("\n"));
         assert!(json.contains("  "));
