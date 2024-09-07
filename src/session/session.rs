@@ -17,7 +17,7 @@ use chrono::Utc;
 use std::collections::HashMap;
 use std::fmt;
 use std::time::Duration;
-use tracing::{debug, instrument};
+use tracing::{debug, info, instrument};
 
 #[derive(Debug)]
 pub struct Session {
@@ -42,13 +42,12 @@ impl Session {
     pub async fn authenticate(&mut self, version: u8) -> anyhow::Result<()> {
         self.version = version;
 
-        let headers = self.build_headers();
+        let headers = self.build_headers(None);
+        let  mut oauth_token =  None;
 
-        let (cst, x_security_token, mut oauth_token) = (None, None, None);
-
-        let auth_version_response = match version {
-            1 | 2 => self.authenticate_v1_v2(&headers).await?,
-            3 => self.authenticate_v3(&headers, &mut oauth_token).await?,
+        let (auth_version_response,cst, x_security_token) = match version {
+            1 | 2 => self.authenticate_v1_v2(headers).await?,
+            3 => self.authenticate_v3(headers, &mut oauth_token).await?,
             _ => panic!("Unsupported authentication version"),
         };
 
@@ -66,21 +65,31 @@ impl Session {
     }
 
     #[instrument(skip(self))]
-    fn build_headers(&self) -> Vec<(String, String)> {
-        vec![
-            (VERSION_HEADER_KEY.to_string(), self.version.to_string()),
-            (
-                TOKEN_HEADER_KEY.to_string(),
-                self.config.credentials.api_key.clone(),
-            ),
-        ]
+    fn build_headers(
+        &self,
+        other: Option<HashMap<String, String>>,
+    ) -> Option<HashMap<String, String>> {
+        let mut headers = HashMap::new();
+        headers.insert(VERSION_HEADER_KEY.to_string(), self.version.to_string());
+        headers.insert(
+            TOKEN_HEADER_KEY.to_string(),
+            self.config.credentials.api_key.clone(),
+        );
+        debug!("BUILD_HEADERS: {:?}", headers);
+        if let Some(other_headers) = other {
+            for (key, value) in other_headers {
+                headers.insert(key, value);
+            }
+        }
+        debug!("BUILD_HEADERS: {:?}", headers);
+        Some(headers)
     }
 
     #[instrument(skip(self))]
     async fn authenticate_v1_v2(
         &self,
-        headers: &[(String, String)],
-    ) -> anyhow::Result<AuthVersionResponse> {
+        headers: Option<HashMap<String, String>>,
+    ) -> anyhow::Result<(AuthVersionResponse, Option<String>, Option<String>)> {
         let auth_request = AuthRequest::new(
             self.config.credentials.username.clone(),
             self.config.credentials.password.clone(),
@@ -91,16 +100,17 @@ impl Session {
             .post_with_headers::<AuthResponse, AuthRequest>("/session", &auth_request, headers)
             .await
             .context("Failed to authenticate")?;
-        debug!("Authentication response v{}: {:?}", self.version, response);
-        Ok(V1(response))
+        debug!("A,uthentication response v{}: {:?}", self.version, response);
+
+        Ok((V1(response), cst, x_security_token))
     }
 
     #[instrument(skip(self))]
     async fn authenticate_v3(
         &self,
-        headers: &[(String, String)],
+        headers: Option<HashMap<String, String>>,
         oauth_token: &mut Option<OAuthToken>,
-    ) -> anyhow::Result<AuthVersionResponse> {
+    ) -> anyhow::Result<(AuthVersionResponse, Option<String>, Option<String>)> {
         let auth_request = AuthRequest::new(
             self.config.credentials.username.clone(),
             self.config.credentials.password.clone(),
@@ -113,7 +123,7 @@ impl Session {
             .context("Failed to authenticate")?;
         debug!("Authentication response v{}: {:?}", self.version, &response);
         *oauth_token = response.oauth_token.clone();
-        Ok(V3(response))
+        Ok((V3(response), cst, x_security_token))
     }
 
     #[instrument(skip(self))]
@@ -128,7 +138,7 @@ impl Session {
         self.authenticate(self.version).await // Default to v1 authentication
     }
 
-    pub fn get_auth_headers(&self) -> anyhow::Result<HashMap<String, String>> {
+    fn get_auth_headers(&self) -> anyhow::Result<HashMap<String, String>> {
         // (CST or Authorization)
         // (X-SECURITY-TOKEN or IG-ACCOUNT-ID)
         if let Some(auth_info) = &self.auth_info {
@@ -212,9 +222,16 @@ impl Session {
             "/session"
         };
 
+        let mut headers = match self.get_auth_headers() {
+            Ok(headers) => Some(headers),
+            Err(_) => None,
+        };
+        // headers = self.build_headers(headers);
+        debug!("GET_SESSION_DETAILS Headers: {:?}", headers);
+
         let response: SessionResponse = self
             .client
-            .get(endpoint)
+            .get(endpoint, headers)
             .await
             .context("Failed to get session details")?;
 

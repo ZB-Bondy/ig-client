@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
 use reqwest::{header, Client, Response};
 use serde::{de::DeserializeOwned, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Debug;
 use std::time::Duration;
-use tracing::{debug, error, instrument};
+use tracing::{debug, error, info, instrument};
 
 /// Represents the HTTP client for interacting with the IG API.
 #[derive(Debug)]
@@ -41,11 +42,21 @@ impl IGHttpClient {
     }
 
     #[instrument(skip(self))]
-    pub async fn get<T: DeserializeOwned + Debug>(&self, endpoint: &str) -> Result<T> {
+    pub async fn get<T: DeserializeOwned + Debug>(
+        &self,
+        endpoint: &str,
+        headers: Option<HashMap<String, String>>,
+    ) -> Result<T> {
         let url = format!("{}{}", self.base_url, endpoint);
         debug!("Sending GET request to {}", url);
 
-        let response = match self.client.get(&url).send().await {
+        let mut request = self.client.get(&url);
+        if let Some(headers) = headers {
+            for (key, value) in headers {
+                request = request.header(key, value);
+            }
+        }
+        let response = match request.send().await {
             Ok(response) => response,
             Err(e) => {
                 error!("Failed to send GET request: {:?}", e);
@@ -81,7 +92,7 @@ impl IGHttpClient {
         &self,
         endpoint: &str,
         body: &B,
-        headers: &[(String, String)],
+        headers: Option<HashMap<String, String>>,
     ) -> Result<(T, Option<String>, Option<String>)> {
         let url = format!("{}{}", self.base_url, endpoint);
         debug!("Sending POST request with custom headers to {}", url);
@@ -90,13 +101,14 @@ impl IGHttpClient {
         debug!("Serialized Body: {}", body_json);
 
         let mut request = self.client.post(&url).json(body);
-        for (key, value) in headers {
-            request = request.header(key, value);
+        if let Some(headers) = headers {
+            for (key, value) in headers {
+                request = request.header(key, value);
+            }
         }
         debug!("Request headers: {:?}", request);
 
         let response = request.send().await?;
-
         debug!("Response: {:?}", response);
 
         let cst: Option<String> = Self::extract_header(&response, "CST").unwrap_or_else(|e| {
@@ -109,8 +121,6 @@ impl IGHttpClient {
                 None
             });
 
-        // debug!("CST: {}, X-SECURITY-TOKEN: {}", cst, x_security_token);
-
         let body = match Self::handle_response(response).await {
             Ok(body) => body,
             Err(e) => {
@@ -118,7 +128,6 @@ impl IGHttpClient {
                 anyhow::bail!("Failed to handle response: {:?}", e)
             }
         };
-
         debug!("Response body: {:?}", body);
 
         Ok((body, cst, x_security_token))
@@ -224,7 +233,7 @@ mod tests_ig_http_client {
             .create();
 
         let client = create_client(&server);
-        let result: serde_json::Value = client.get("/test").await.unwrap();
+        let result: serde_json::Value = client.get("/test", None).await.unwrap();
 
         assert_eq!(result["message"], "success");
         mock.assert();
@@ -278,10 +287,15 @@ mod tests_ig_http_client {
 
         let client = create_client(&server);
         let body = json!({"key": "value"});
-        let headers = vec![("Custom-Header".to_string(), "custom_value".to_string())];
+        let mut headers = HashMap::new();
+        headers.insert("Custom-Header".to_string(), "custom_value".to_string());
 
         let (result, cst, x_security_token) = client
-            .post_with_headers::<serde_json::Value, serde_json::Value>("/test", &body, &headers)
+            .post_with_headers::<serde_json::Value, serde_json::Value>(
+                "/test",
+                &body,
+                Some(headers),
+            )
             .await
             .unwrap();
 
@@ -342,7 +356,7 @@ mod tests_ig_http_client {
             .create();
 
         let client = create_client(&server);
-        let result: Result<serde_json::Value> = client.get("/error").await;
+        let result: Result<serde_json::Value> = client.get("/error", None).await;
 
         assert!(result.is_err());
         assert!(result
@@ -396,7 +410,7 @@ mod tests_get {
             .create();
 
         let client = IGHttpClient::new(&server.url(), "test-api-key").unwrap();
-        let response: serde_json::Value = client.get("/test-endpoint").await.unwrap();
+        let response: serde_json::Value = client.get("/test-endpoint", None).await.unwrap();
         assert_eq!(response, json!({"key": "value"}));
     }
 
@@ -412,7 +426,7 @@ mod tests_get {
 
         let client = IGHttpClient::new(&server.url(), "test-api-key").unwrap();
 
-        let result: Result<serde_json::Value> = client.get("/test-endpoint").await;
+        let result: Result<serde_json::Value> = client.get("/test-endpoint", None).await;
 
         assert!(result.is_err());
     }

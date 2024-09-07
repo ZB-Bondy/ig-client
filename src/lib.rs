@@ -14,5 +14,6 @@ pub mod session;
 
 pub mod transport;
 
-mod constants;
+pub(crate) mod constants;
+
 pub mod utils;
