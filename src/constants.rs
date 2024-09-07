@@ -1,18 +1,10 @@
 /******************************************************************************
    Author: Joaquín Béjar García
    Email: jb@taunais.com
-   Date: 3/9/24
+   Date: 7/9/24
 ******************************************************************************/
 
-pub mod config;
+pub(crate) const VERSION_HEADER_KEY: &str = "version";
+pub(crate) const TOKEN_HEADER_KEY: &str = "x-ig-api-key";
 
-pub mod application;
-
-pub mod presentation;
-
-pub mod session;
-
-pub mod transport;
-
-mod constants;
-pub mod utils;
+pub(crate) const DEFAULT_SESSION_V3_REFRESH: u64 = 60;

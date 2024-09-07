@@ -3,6 +3,31 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/*
+Authentication and authorisation
+There are currently two mechanisms for logging into and accessing the API.
+
+POST /session v1 and v2 return a CST header with a token identifying a client and an X-SECURITY-TOKEN header with a token identifying the current account. These headers should be passed on subsequent requests to the API. Both tokens are initially valid for 6 hours but get extended up to a maximum of 72 hours while they are in use.
+
+POST /session v3 returns OAuth access and refresh tokens which the user can pass in subsequent API requests via the Authorization header, e.g.:
+
+Authorization : Bearer 5d1ea445-568b-4748-ab47-af9b982bfb74
+
+The access token only identifies the client so users should also pass an IG-ACCOUNT-ID header to specify the account the request applies to, e.g.:
+IG-ACCOUNT-ID : PZVI2
+
+The access token is only valid for a limited period of time (e.g. 60 seconds) specified by the login response.
+
+       "oauthToken": {
+               "access_token": "702f6580-25c7-4c04-931d-6000efa824f8",
+               "refresh_token": "a9cec2d7-fd01-4d16-a2dd-7427ef6a471d",
+               "scope": "profile",
+               "token_type": "Bearer",
+               "expires_in": "60"
+       }
+The refresh token can used to acquire a new access token, either before or after the access token has expired but please note that the refresh token does also expiry some time after the access token has expired (e.g. 10 minutes). A call to refresh an access token will also return a new refresh token.The scope for individual clients is always profile which allows full access to the user's account.
+ */
+
 #[derive(Debug, Serialize)]
 pub(crate) struct AuthRequest {
     identifier: String,
@@ -56,7 +81,7 @@ pub(crate) struct AuthResponse {
     pub dealing_enabled: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct OAuthToken {
     pub access_token: String,
     pub refresh_token: String,
@@ -78,6 +103,7 @@ pub(crate) struct AuthInfo {
     pub(crate) expires_at: DateTime<Utc>,
     pub(crate) cst: Option<String>,
     pub(crate) x_security_token: Option<String>,
+    pub(crate) oauth_token: Option<OAuthToken>,
 }
 
 impl AuthInfo {
@@ -86,12 +112,14 @@ impl AuthInfo {
         expires_at: DateTime<Utc>,
         cst: Option<String>,
         x_security_token: Option<String>,
+        oauth_token: Option<OAuthToken>,
     ) -> Self {
         Self {
             auth_response,
             expires_at,
             cst,
             x_security_token,
+            oauth_token,
         }
     }
 }
@@ -364,6 +392,7 @@ mod tests_auth_info {
             expires_at,
             Some("cst123".to_string()),
             Some("token456".to_string()),
+            None,
         );
 
         let display_output = auth_info.to_string();

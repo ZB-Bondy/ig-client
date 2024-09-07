@@ -4,15 +4,17 @@
    Date: 7/9/24
 ******************************************************************************/
 use crate::config::Config;
+use crate::constants::{DEFAULT_SESSION_V3_REFRESH, TOKEN_HEADER_KEY, VERSION_HEADER_KEY};
 use crate::session::account::{AccountSwitchRequest, AccountSwitchResponse};
 use crate::session::auth::AuthVersionResponse::{V1, V2, V3};
 use crate::session::auth::{
-    AuthInfo, AuthRequest, AuthResponse, AuthResponseV3, AuthVersionResponse,
+    AuthInfo, AuthRequest, AuthResponse, AuthResponseV3, AuthVersionResponse, OAuthToken,
 };
 use crate::session::session_response::SessionResponse;
 use crate::transport::http_client::IGHttpClient;
 use anyhow::Context;
 use chrono::Utc;
+use std::collections::HashMap;
 use std::fmt;
 use std::time::Duration;
 use tracing::{debug, instrument};
@@ -39,69 +41,79 @@ impl Session {
     #[instrument(skip(self))]
     pub async fn authenticate(&mut self, version: u8) -> anyhow::Result<()> {
         self.version = version;
-        let version_header = ("version".to_string(), version.to_string());
-        let token_header = (
-            "x-ig-api-key".to_string(),
-            self.config.credentials.api_key.clone(),
-        );
-        let headers = vec![version_header, token_header];
-        debug!("Headers: {:?}", headers);
 
-        let (cst, x_security_token): (Option<String>, Option<String>) = (None, None);
-        let auth_version_response: AuthVersionResponse = match version {
-            1 | 2 => {
-                let auth_request = AuthRequest::new(
-                    self.config.credentials.username.clone(),
-                    self.config.credentials.password.clone(),
-                    Some(false),
-                );
-                let (response, cst, x_security_token) = self
-                    .client
-                    .post_with_headers::<AuthResponse, AuthRequest>(
-                        "/session",
-                        &auth_request,
-                        &headers,
-                    )
-                    .await
-                    .context("Failed to authenticate")?;
-                debug!("Authentication response v{}: {:?}", version, response);
-                V1(response)
-            }
-            3 => {
-                let auth_request = AuthRequest::new(
-                    self.config.credentials.username.clone(),
-                    self.config.credentials.password.clone(),
-                    None,
-                );
-                let (response, cst, x_security_token) = self
-                    .client
-                    .post_with_headers::<AuthResponseV3, AuthRequest>(
-                        "/session",
-                        &auth_request,
-                        &headers,
-                    )
-                    .await
-                    .context("Failed to authenticate")?;
-                debug!("Authentication response v{}: {:?}", version, response);
-                V3(response)
-            }
-            _ => {
-                panic!("Unsupported authentication version")
-            }
+        let headers = self.build_headers();
+
+        let (cst, x_security_token, mut oauth_token) = (None, None, None);
+
+        let auth_version_response = match version {
+            1 | 2 => self.authenticate_v1_v2(&headers).await?,
+            3 => self.authenticate_v3(&headers, &mut oauth_token).await?,
+            _ => panic!("Unsupported authentication version"),
         };
 
         debug!("Authenticating user: {}", self.config.credentials.username);
-        let auth_info: Option<AuthInfo> = Some(AuthInfo::new(
+        self.auth_info = Some(AuthInfo::new(
             auth_version_response,
-            Utc::now() + Duration::from_secs(60),
+            Utc::now() + Duration::from_secs(DEFAULT_SESSION_V3_REFRESH),
             cst,
             x_security_token,
+            oauth_token,
         ));
-
-        self.auth_info = auth_info;
-
         debug!("Authentication successful");
+
         Ok(())
+    }
+
+    #[instrument(skip(self))]
+    fn build_headers(&self) -> Vec<(String, String)> {
+        vec![
+            (VERSION_HEADER_KEY.to_string(), self.version.to_string()),
+            (
+                TOKEN_HEADER_KEY.to_string(),
+                self.config.credentials.api_key.clone(),
+            ),
+        ]
+    }
+
+    #[instrument(skip(self))]
+    async fn authenticate_v1_v2(
+        &self,
+        headers: &[(String, String)],
+    ) -> anyhow::Result<AuthVersionResponse> {
+        let auth_request = AuthRequest::new(
+            self.config.credentials.username.clone(),
+            self.config.credentials.password.clone(),
+            Some(false),
+        );
+        let (response, cst, x_security_token) = self
+            .client
+            .post_with_headers::<AuthResponse, AuthRequest>("/session", &auth_request, headers)
+            .await
+            .context("Failed to authenticate")?;
+        debug!("Authentication response v{}: {:?}", self.version, response);
+        Ok(V1(response))
+    }
+
+    #[instrument(skip(self))]
+    async fn authenticate_v3(
+        &self,
+        headers: &[(String, String)],
+        oauth_token: &mut Option<OAuthToken>,
+    ) -> anyhow::Result<AuthVersionResponse> {
+        let auth_request = AuthRequest::new(
+            self.config.credentials.username.clone(),
+            self.config.credentials.password.clone(),
+            Some(false),
+        );
+        let (response, cst, x_security_token) = self
+            .client
+            .post_with_headers::<AuthResponseV3, AuthRequest>("/session", &auth_request, headers)
+            .await
+            .context("Failed to authenticate")?;
+        debug!("Authentication response v{}: {:?}", self.version, &response);
+        *oauth_token = response.oauth_token.clone();
+        Ok(V3(response))
     }
 
     #[instrument(skip(self))]
@@ -116,25 +128,40 @@ impl Session {
         self.authenticate(self.version).await // Default to v1 authentication
     }
 
-    pub fn get_auth_headers(&self) -> Option<(Option<String>, String, Option<String>)> {
-        // (CST, Account ID, X-SECURITY-TOKEN)
+    pub fn get_auth_headers(&self) -> anyhow::Result<HashMap<String, String>> {
+        // (CST or Authorization)
+        // (X-SECURITY-TOKEN or IG-ACCOUNT-ID)
         if let Some(auth_info) = &self.auth_info {
             match &auth_info.auth_response {
-                V1(response) | V2(response) => {
-                    let cst = auth_info.cst.clone();
-                    let account_id = response.current_account_id.clone();
-                    let x_security_token = auth_info.x_security_token.clone();
-                    Some((cst, account_id, x_security_token))
+                V1(_) | V2(_) => {
+                    let mut headers = HashMap::new();
+                    if let Some(cst) = auth_info.cst.clone() {
+                        headers.insert("CST".to_string(), cst);
+                    };
+                    if let Some(x_security_token) = auth_info.x_security_token.clone() {
+                        headers.insert("X-SECURITY-TOKEN".to_string(), x_security_token);
+                    };
+                    Ok(headers)
                 }
                 V3(response) => {
-                    let cst = auth_info.cst.clone();
-                    let account_id = response.account_id.clone();
-                    let x_security_token = auth_info.x_security_token.clone();
-                    Some((cst, account_id, x_security_token))
+                    let mut headers = HashMap::new();
+                    if let Some(oauth_token) = &auth_info.oauth_token {
+                        headers.insert(
+                            "Authorization".to_string(),
+                            format!("Bearer {}", oauth_token.access_token),
+                        );
+                    }
+                    headers.insert("IG-ACCOUNT-ID".to_string(), response.account_id.clone());
+
+                    if headers.len() != 2 {
+                        Ok(HashMap::new())
+                    } else {
+                        Ok(headers)
+                    }
                 }
             }
         } else {
-            None
+            Ok(HashMap::new())
         }
     }
 
@@ -460,6 +487,7 @@ mod tests_display {
                 expires_at: fixed_instant,
                 cst: Option::from("cst123".to_string()),
                 x_security_token: Option::from("token456".to_string()),
+                oauth_token: None,
             }),
             version: 1,
         };
@@ -520,5 +548,169 @@ mod tests_display {
             serde_json::from_str::<serde_json::Value>(&display_output).unwrap(),
             expected_json
         );
+    }
+}
+
+#[cfg(test)]
+mod tests_get_headers {
+    use super::*;
+    use chrono::Utc;
+
+    #[test]
+    fn test_get_auth_headers_v1() {
+        let session = Session {
+            client: IGHttpClient::new("https://api.example.com", "key789").unwrap(),
+            config: Config::default(), // Asumiendo que hay un método default
+            auth_info: Some(AuthInfo {
+                auth_response: V1(AuthResponse {
+                    account_type: "".to_string(),
+                    account_info: Default::default(),
+                    currency_iso_code: "".to_string(),
+                    currency_symbol: "".to_string(),
+                    current_account_id: "".to_string(),
+                    lightstreamer_endpoint: "".to_string(),
+                    accounts: vec![],
+                    client_id: "".to_string(),
+                    timezone_offset: 0,
+                    has_active_demo_accounts: false,
+                    has_active_live_accounts: false,
+                    trailing_stops_enabled: false,
+                    rerouting_environment: None,
+                    dealing_enabled: false,
+                }),
+                expires_at: Utc::now(),
+                cst: Some("cst123".to_string()),
+                x_security_token: Some("token456".to_string()),
+                oauth_token: None,
+            }),
+            version: 1,
+        };
+
+        let headers = session.get_auth_headers().unwrap();
+        assert_eq!(headers.get("CST"), Some(&"cst123".to_string()));
+        assert_eq!(
+            headers.get("X-SECURITY-TOKEN"),
+            Some(&"token456".to_string())
+        );
+        assert_eq!(headers.len(), 2);
+    }
+
+    #[test]
+    fn test_get_auth_headers_v2() {
+        let session = Session {
+            client: IGHttpClient::new("https://api.example.com", "key789").unwrap(),
+            config: Config::default(),
+            auth_info: Some(AuthInfo {
+                auth_response: V1(AuthResponse {
+                    account_type: "".to_string(),
+                    account_info: Default::default(),
+                    currency_iso_code: "".to_string(),
+                    currency_symbol: "".to_string(),
+                    current_account_id: "".to_string(),
+                    lightstreamer_endpoint: "".to_string(),
+                    accounts: vec![],
+                    client_id: "".to_string(),
+                    timezone_offset: 0,
+                    has_active_demo_accounts: false,
+                    has_active_live_accounts: false,
+                    trailing_stops_enabled: false,
+                    rerouting_environment: None,
+                    dealing_enabled: false,
+                }),
+                expires_at: Utc::now(),
+                cst: Some("cst789".to_string()),
+                x_security_token: Some("token101".to_string()),
+                oauth_token: None,
+            }),
+            version: 2,
+        };
+
+        let headers = session.get_auth_headers().unwrap();
+        assert_eq!(headers.get("CST"), Some(&"cst789".to_string()));
+        assert_eq!(
+            headers.get("X-SECURITY-TOKEN"),
+            Some(&"token101".to_string())
+        );
+        assert_eq!(headers.len(), 2);
+    }
+
+    #[test]
+    fn test_get_auth_headers_v3() {
+        let session = Session {
+            client: IGHttpClient::new("https://api.example.com", "key789").unwrap(),
+            config: Config::default(),
+            auth_info: Some(AuthInfo {
+                auth_response: V3(AuthResponseV3 {
+                    account_id: "acc123".to_string(),
+                    client_id: "client456".to_string(),
+                    lightstreamer_endpoint: "wss://example.com".to_string(),
+                    oauth_token: Some(OAuthToken {
+                        access_token: "access789".to_string(),
+                        refresh_token: "refresh012".to_string(),
+                        scope: "scope345".to_string(),
+                        token_type: "Bearer".to_string(),
+                        expires_in: "3600".to_string(),
+                    }),
+                    timezone_offset: 0.0,
+                }),
+                expires_at: Utc::now(),
+                cst: None,
+                x_security_token: None,
+                oauth_token: Some(OAuthToken {
+                    access_token: "access789".to_string(),
+                    refresh_token: "refresh012".to_string(),
+                    scope: "scope345".to_string(),
+                    token_type: "Bearer".to_string(),
+                    expires_in: "3600".to_string(),
+                }),
+            }),
+            version: 3,
+        };
+
+        let headers = session.get_auth_headers().unwrap();
+        assert_eq!(
+            headers.get("Authorization"),
+            Some(&"Bearer access789".to_string())
+        );
+        assert_eq!(headers.get("IG-ACCOUNT-ID"), Some(&"acc123".to_string()));
+        assert_eq!(headers.len(), 2);
+    }
+
+    #[test]
+    fn test_get_auth_headers_no_auth_info() {
+        let session = Session {
+            client: IGHttpClient::new("https://api.example.com", "key789").unwrap(),
+            config: Config::default(),
+            auth_info: None,
+            version: 1,
+        };
+
+        let headers = session.get_auth_headers().unwrap();
+        assert!(headers.is_empty());
+    }
+
+    #[test]
+    fn test_get_auth_headers_v3_missing_fields() {
+        let session = Session {
+            client: IGHttpClient::new("https://api.example.com", "key789").unwrap(),
+            config: Config::default(),
+            auth_info: Some(AuthInfo {
+                auth_response: V3(AuthResponseV3 {
+                    account_id: "acount_id".to_string(),
+                    client_id: "client456".to_string(),
+                    lightstreamer_endpoint: "wss://example.com".to_string(),
+                    oauth_token: None,
+                    timezone_offset: 0.0,
+                }),
+                expires_at: Utc::now(),
+                cst: None,
+                x_security_token: None,
+                oauth_token: None,
+            }),
+            version: 3,
+        };
+
+        let headers = session.get_auth_headers().unwrap();
+        assert!(headers.is_empty());
     }
 }
