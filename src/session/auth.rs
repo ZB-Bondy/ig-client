@@ -76,8 +76,8 @@ pub(crate) enum AuthVersionResponse {
 pub(crate) struct AuthInfo {
     pub(crate) auth_response: AuthVersionResponse,
     pub(crate) expires_at: Instant,
-    cst: Option<String>,
-    x_security_token: Option<String>,
+    pub(crate) cst: Option<String>,
+    pub(crate) x_security_token: Option<String>,
 }
 
 impl AuthInfo {

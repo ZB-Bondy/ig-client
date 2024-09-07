@@ -5,7 +5,7 @@
 ******************************************************************************/
 use crate::config::Config;
 use crate::session::account::{AccountSwitchRequest, AccountSwitchResponse};
-use crate::session::auth::AuthVersionResponse::{V1, V3};
+use crate::session::auth::AuthVersionResponse::{V1, V2, V3};
 use crate::session::auth::{
     AuthInfo, AuthRequest, AuthResponse, AuthResponseV3, AuthVersionResponse,
 };
@@ -20,6 +20,7 @@ pub struct Session {
     client: IGHttpClient,
     config: Config,
     auth_info: Option<AuthInfo>,
+    version: u8,
 }
 
 impl Session {
@@ -29,11 +30,13 @@ impl Session {
             client,
             config,
             auth_info: None,
+            version: 1,
         })
     }
 
     #[instrument(skip(self))]
     pub async fn authenticate(&mut self, version: u8) -> anyhow::Result<()> {
+        self.version = version;
         let version_header = ("version".to_string(), version.to_string());
         let token_header = (
             "x-ig-api-key".to_string(),
@@ -106,46 +109,34 @@ impl Session {
                 return Ok(());
             }
         }
-
+        debug!("Token expired, re-authenticating");
         // TODO: If we reach here, we need to reauthenticate or refresh the token
-        self.authenticate(1).await // Default to v1 authentication
+        self.authenticate(self.version).await // Default to v1 authentication
     }
 
-    pub fn get_auth_headers(&self) -> Option<(String, String, String)> {
-        // self.auth_info.as_ref().map(|info| {
-        //     if let Some(ref oauth_token) = info.auth_response.oauth_token {
-        //         (
-        //             format!("Bearer {}", oauth_token.access_token),
-        //             info.auth_response.account_id.clone(),
-        //             String::new(), // No X-SECURITY-TOKEN for OAuth
-        //         )
-        //     } else {
-        //         (
-        //             info.cst.clone(),
-        //             info.auth_response.account_id.clone(),
-        //             info.x_security_token.clone(),
-        //         )
-        //     }
-        // })
-        None
+    pub fn get_auth_headers(&self) -> Option<(Option<String>, String, Option<String>)> { // (CST, Account ID, X-SECURITY-TOKEN)
+        if let Some(auth_info) = &self.auth_info {
+            match &auth_info.auth_response {
+                V1(response) | V2(response) => {
+                    let cst = auth_info.cst.clone();
+                    let account_id = response.current_account_id.clone();
+                    let x_security_token = auth_info.x_security_token.clone();
+                    Some((cst, account_id, x_security_token))
+                }
+                V3(response) => {
+                    let cst = auth_info.cst.clone();
+                    let account_id = response.account_id.clone();
+                    let x_security_token = auth_info.x_security_token.clone();
+                    Some((cst, account_id, x_security_token))
+                }
+            }
+        } else {
+            None
+        }
     }
 
     pub async fn refresh_token(&mut self) -> anyhow::Result<()> {
-        // if let Some(auth_info) = &self.auth_info {
-        //     if auth_info.auth_response.oauth_token.is_some() {
-        //         debug!("OAuth token has expired or is about to expire. Re-authenticating...");
-        //
-        //         self.authenticate(3)
-        //             .await
-        //             .context("Failed to re-authenticate")?;
-        //         return Ok(());
-        //     }
-        // }
-        //
-        // Err(anyhow::anyhow!(
-        //     "No OAuth token available or session has expired"
-        // ))
-        Ok(())
+        todo!("Implement token refresh using endpoint /session/refresh-token")
     }
 
     pub async fn logout(&mut self) -> anyhow::Result<()> {
@@ -205,6 +196,8 @@ impl Session {
 mod tests_session {
     use super::*;
     use mockito::Server;
+    use serde_json::json;
+    use crate::utils::logger::setup_logger;
 
     fn create_test_config(server_url: &str) -> Config {
         let mut config = Config::new();
@@ -275,39 +268,51 @@ mod tests_session {
 
     #[tokio::test]
     async fn test_ensure_auth_when_not_authenticated() {
+        setup_logger();
         let mut server = Server::new_async().await;
-        let json_data = r#"
-        {
-            "clientId": "1223423",
-            "accountId": "AAAAAA",
-            "timezoneOffset": 1,
-            "lightstreamerEndpoint": "https://demo-apd.marketdatasystems.com",
-            "oauthToken": {
-                "access_token": "111111",
-                "refresh_token": "222222",
-                "scope": "profile",
-                "token_type": "Bearer",
-                "expires_in": "60"
-            }
-        }
-        "#;
+        let json_data = json!({
+            "accountType": "CFD",
+            "accountInfo": {
+                "balance": 1000.0,
+                "deposit": 500.0,
+                "profitLoss": 200.0,
+                "available": 700.0
+            },
+            "currencyIsoCode": "USD",
+            "currencySymbol": "$",
+            "currentAccountId": "ACC789",
+            "lightstreamerEndpoint": "wss://example.com",
+            "accounts": [{
+                "accountId": "ACC789",
+                "accountName": "Main Account",
+                "preferred": true,
+                "accountType": "CFD"
+            }],
+            "clientId": "CLIENT123",
+            "timezoneOffset": -5,
+            "hasActiveDemoAccounts": false,
+            "hasActiveLiveAccounts": true,
+            "trailingStopsEnabled": true,
+            "reroutingEnvironment": "LIVE",
+            "dealingEnabled": true
+        });
         let mock = server
             .mock("POST", "/session")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(json_data)
+            .with_body(json_data.to_string())
             .create_async()
             .await;
 
         let config = create_test_config(&server.url());
-        let session = Session::new(config).unwrap();
+        let mut session = Session::new(config).unwrap();
 
-        // let result = session.ensure_auth().await;
+        let result = session.ensure_auth().await;
 
-        // assert!(result.is_ok());
-        // assert!(session.auth_info.is_some());
-        //
-        // mock.assert_async().await;
+        assert!(result.is_ok());
+        assert!(session.auth_info.is_some());
+
+        mock.assert_async().await;
     }
 
     #[tokio::test]
@@ -338,13 +343,13 @@ mod tests_session {
             .await;
 
         let config = create_test_config(&server.url());
-        let session = Session::new(config).unwrap();
+        let mut session = Session::new(config).unwrap();
 
-        // session.authenticate(3).await.unwrap();
-        // let result = session.ensure_auth().await;
-        // assert!(result.is_ok());
-        //
-        // mock.assert_async().await;
+        session.authenticate(3).await.unwrap();
+        let result = session.ensure_auth().await;
+        assert!(result.is_ok());
+
+        mock.assert_async().await;
     }
 
     #[tokio::test]
