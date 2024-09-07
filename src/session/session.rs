@@ -12,8 +12,9 @@ use crate::session::auth::{
 use crate::session::session_response::SessionResponse;
 use crate::transport::http_client::IGHttpClient;
 use anyhow::Context;
+use chrono::Utc;
 use std::fmt;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tracing::{debug, instrument};
 
 #[derive(Debug)]
@@ -92,7 +93,7 @@ impl Session {
         debug!("Authenticating user: {}", self.config.credentials.username);
         let auth_info: Option<AuthInfo> = Some(AuthInfo::new(
             auth_version_response,
-            Instant::now() + Duration::from_secs(60),
+            Utc::now() + Duration::from_secs(60),
             cst,
             x_security_token,
         ));
@@ -106,7 +107,7 @@ impl Session {
     #[instrument(skip(self))]
     pub async fn ensure_auth(&mut self) -> anyhow::Result<()> {
         if let Some(auth_info) = &self.auth_info {
-            if auth_info.expires_at > Instant::now() {
+            if auth_info.expires_at > Utc::now() {
                 return Ok(());
             }
         }
@@ -396,13 +397,14 @@ mod tests_session {
 
         let mut config = create_test_config(&server.url());
         config.rest_api.timeout = 1; // Set timeout to 1 second for testing
-        let session = Session::new(config).unwrap();
+        let mut session = Session::new(config).unwrap();
 
-        // session.authenticate(3).await.unwrap();
-        // tokio::time::sleep(Duration::from_secs(2)).await;
-        // let result = session.ensure_auth().await;
-        // assert!(result.is_ok());
-        // mock.assert_async().await;
+        session.authenticate(3).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let result = session.ensure_auth().await;
+        assert!(result.is_ok());
+
+        // mock.assert_async().await; // TODO: Fix this test
     }
 }
 
@@ -416,7 +418,7 @@ mod tests_display {
 
     #[test]
     fn test_session_display() {
-        let fixed_instant = Instant::now() + FIXED_DURATION;
+        let fixed_instant = Utc::now() + FIXED_DURATION;
 
         let session = Session {
             client: IGHttpClient::new("https://api.example.com", "key789").unwrap(),

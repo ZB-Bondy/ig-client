@@ -1,7 +1,7 @@
 use crate::session::account::{AccountInfo, Accounts};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::time::Instant;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct AuthRequest {
@@ -75,7 +75,7 @@ pub(crate) enum AuthVersionResponse {
 #[derive(Debug)]
 pub(crate) struct AuthInfo {
     pub(crate) auth_response: AuthVersionResponse,
-    pub(crate) expires_at: Instant,
+    pub(crate) expires_at: DateTime<Utc>,
     pub(crate) cst: Option<String>,
     pub(crate) x_security_token: Option<String>,
 }
@@ -83,7 +83,7 @@ pub(crate) struct AuthInfo {
 impl AuthInfo {
     pub fn new(
         auth_response: AuthVersionResponse,
-        expires_at: Instant,
+        expires_at: DateTime<Utc>,
         cst: Option<String>,
         x_security_token: Option<String>,
     ) -> Self {
@@ -326,15 +326,11 @@ mod tests_oauth_token {
 mod tests_auth_info {
     use super::*;
     use serde_json::json;
-    use std::time::{Duration, UNIX_EPOCH};
 
     #[test]
     fn test_auth_info_display() {
         // Crear un tiempo fijo: 2023-09-07T12:00:00Z
-        let fixed_time = UNIX_EPOCH + Duration::from_secs(1694088000);
-        let expires_at = Instant::now()
-            .checked_add(fixed_time.duration_since(UNIX_EPOCH).unwrap())
-            .unwrap();
+        let expires_at = Utc::now();
 
         let auth_response = AuthResponse {
             account_type: "CFD".to_string(),
