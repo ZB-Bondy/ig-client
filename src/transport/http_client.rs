@@ -61,7 +61,7 @@ impl IGHttpClient {
         &self,
         endpoint: &str,
         body: &B,
-    ) -> Result<(T, Option<String>, Option<String>)>{
+    ) -> Result<(T, Option<String>, Option<String>)> {
         let url = format!("{}{}", self.base_url, endpoint);
         debug!("Sending POST request to {}", url);
 
@@ -102,10 +102,11 @@ impl IGHttpClient {
             error!("Failed to extract CST header: {:?}", e);
             None
         });
-        let x_security_token: Option<String> = Self::extract_header(&response, "X-SECURITY-TOKEN").unwrap_or_else(|e| {
-            error!("Failed to extract X-SECURITY-TOKEN header: {:?}", e);
-            None
-        });
+        let x_security_token: Option<String> = Self::extract_header(&response, "X-SECURITY-TOKEN")
+            .unwrap_or_else(|e| {
+                error!("Failed to extract X-SECURITY-TOKEN header: {:?}", e);
+                None
+            });
 
         // debug!("CST: {}, X-SECURITY-TOKEN: {}", cst, x_security_token);
 
@@ -180,10 +181,9 @@ impl IGHttpClient {
             .headers()
             .get(header_name)
             .and_then(|h| h.to_str().ok())
-            .map(String::from) {
-            Some(header_value) => {
-                Ok(Some(header_value))
-            }
+            .map(String::from)
+        {
+            Some(header_value) => Ok(Some(header_value)),
             None => {
                 debug!("Header {} not found in response", header_name);
                 Ok(None)
@@ -363,11 +363,7 @@ mod tests_ig_http_client {
         let result = client
             .post::<serde_json::Value, serde_json::Value>("/test", &body)
             .await;
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Failed to extract CST header"));
+        assert!(result.is_ok());
         mock.assert();
     }
 }
@@ -441,10 +437,11 @@ mod tests_post {
 
         let client = IGHttpClient::new(&server.url(), "test-api-key").unwrap();
 
-        let (response, cst, x_security_token): (serde_json::Value, Option<String>, Option<String>) = client
-            .post("/test-endpoint", &json!({"request_key": "request_value"}))
-            .await
-            .unwrap();
+        let (response, cst, x_security_token): (serde_json::Value, Option<String>, Option<String>) =
+            client
+                .post("/test-endpoint", &json!({"request_key": "request_value"}))
+                .await
+                .unwrap();
 
         assert_eq!(response, json!({"key": "value"}));
         assert_eq!(cst.unwrap(), "test-cst");

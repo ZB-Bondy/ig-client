@@ -1,16 +1,16 @@
 /******************************************************************************
-    Author: Joaquín Béjar García
-    Email: jb@taunais.com 
-    Date: 7/9/24
- ******************************************************************************/
+   Author: Joaquín Béjar García
+   Email: jb@taunais.com
+   Date: 7/9/24
+******************************************************************************/
 
 /*
 
- */
+*/
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug,Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Accounts {
     #[serde(rename = "accountId")]
     pub account_id: String,
@@ -71,15 +71,22 @@ impl fmt::Display for Accounts {
 
 impl fmt::Display for AccountInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{{\"balance\":{:.2},\"deposit\":{:.2},\"profitLoss\":{:.2},\"available\":{:.2}}}",
-               self.balance, self.deposit, self.profit_loss, self.available)
+        write!(
+            f,
+            "{{\"balance\":{:.2},\"deposit\":{:.2},\"profitLoss\":{:.2},\"available\":{:.2}}}",
+            self.balance, self.deposit, self.profit_loss, self.available
+        )
     }
 }
 
 impl fmt::Display for AccountSwitchRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{{\"accountId\":\"{}\",\"defaultAccount\":{}}}",
-               self.account_id, self.default_account.unwrap_or(false))
+        write!(
+            f,
+            "{{\"accountId\":\"{}\",\"defaultAccount\":{}}}",
+            self.account_id,
+            self.default_account.unwrap_or(false)
+        )
     }
 }
 
@@ -93,7 +100,7 @@ impl fmt::Display for AccountSwitchResponse {
 #[cfg(test)]
 mod tests_accounts {
     use super::*;
-    use pretty_assertions::assert_eq;
+
     use serde_json::json;
 
     #[test]
@@ -121,7 +128,7 @@ mod tests_accounts {
 #[cfg(test)]
 mod tests_account_info {
     use super::*;
-    use pretty_assertions::assert_eq;
+
     use serde_json::json;
 
     #[test]
@@ -149,7 +156,7 @@ mod tests_account_info {
 #[cfg(test)]
 mod tests_account_switch_request {
     use super::*;
-    use pretty_assertions::assert_eq;
+
     use serde_json::json;
 
     #[test]
@@ -173,7 +180,7 @@ mod tests_account_switch_request {
 #[cfg(test)]
 mod tests_account_switch_response {
     use super::*;
-    use pretty_assertions::assert_eq;
+
     use serde_json::json;
 
     #[test]

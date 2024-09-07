@@ -1,11 +1,7 @@
-use crate::config::Config;
-use crate::transport::http_client::IGHttpClient;
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant};
-use tracing::{debug, instrument};
 use crate::session::account::{AccountInfo, Accounts};
+use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::time::Instant;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct AuthRequest {
@@ -85,7 +81,12 @@ pub(crate) struct AuthInfo {
 }
 
 impl AuthInfo {
-    pub fn new(auth_response: AuthVersionResponse, expires_at: Instant, cst: Option<String>, x_security_token: Option<String>) -> Self {
+    pub fn new(
+        auth_response: AuthVersionResponse,
+        expires_at: Instant,
+        cst: Option<String>,
+        x_security_token: Option<String>,
+    ) -> Self {
         Self {
             auth_response,
             expires_at,
@@ -107,8 +108,12 @@ impl AuthRequest {
 
 impl fmt::Display for AuthRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{{\"identifier\":\"{}\",\"password\":\"[REDACTED]\",\"encryptedPassword\":{}}}",
-               self.identifier, self.encrypted_password.unwrap_or(false))
+        write!(
+            f,
+            "{{\"identifier\":\"{}\",\"password\":\"[REDACTED]\",\"encryptedPassword\":{}}}",
+            self.identifier,
+            self.encrypted_password.unwrap_or(false)
+        )
     }
 }
 
@@ -158,7 +163,6 @@ impl fmt::Display for AuthInfo {
     }
 }
 
-
 #[cfg(test)]
 mod tests_auth_request {
     use super::*;
@@ -166,7 +170,8 @@ mod tests_auth_request {
 
     #[test]
     fn test_auth_request_display() {
-        let request = AuthRequest::new("user123".to_string(), "password123".to_string(), Some(true));
+        let request =
+            AuthRequest::new("user123".to_string(), "password123".to_string(), Some(true));
         let display_output = request.to_string();
         let expected_json = json!({
             "identifier": "user123",
@@ -321,7 +326,7 @@ mod tests_oauth_token {
 mod tests_auth_info {
     use super::*;
     use serde_json::json;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, UNIX_EPOCH};
 
     #[test]
     fn test_auth_info_display() {

@@ -1,5 +1,5 @@
+mod account;
 pub mod auth;
-pub mod ws_auth;
 pub mod session;
 mod session_response;
-mod account;
+pub mod ws_auth;

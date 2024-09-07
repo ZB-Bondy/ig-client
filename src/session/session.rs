@@ -1,17 +1,19 @@
 /******************************************************************************
-    Author: Joaquín Béjar García
-    Email: jb@taunais.com 
-    Date: 7/9/24
- ******************************************************************************/
-use std::time::{Duration, Instant};
-use anyhow::Context;
-use tracing::{debug, error, instrument};
+   Author: Joaquín Béjar García
+   Email: jb@taunais.com
+   Date: 7/9/24
+******************************************************************************/
 use crate::config::Config;
 use crate::session::account::{AccountSwitchRequest, AccountSwitchResponse};
-use crate::session::auth::{AuthInfo, AuthRequest, AuthResponse, AuthResponseV3, AuthVersionResponse};
 use crate::session::auth::AuthVersionResponse::{V1, V3};
+use crate::session::auth::{
+    AuthInfo, AuthRequest, AuthResponse, AuthResponseV3, AuthVersionResponse,
+};
 use crate::session::session_response::SessionResponse;
 use crate::transport::http_client::IGHttpClient;
+use anyhow::Context;
+use std::time::{Duration, Instant};
+use tracing::{debug, instrument};
 
 #[derive(Debug)]
 pub struct Session {
@@ -41,7 +43,7 @@ impl Session {
         debug!("Headers: {:?}", headers);
 
         let (cst, x_security_token): (Option<String>, Option<String>) = (None, None);
-        let auth_version_response: AuthVersionResponse =  match version {
+        let auth_version_response: AuthVersionResponse = match version {
             1 | 2 => {
                 let auth_request = AuthRequest::new(
                     self.config.credentials.username.clone(),
@@ -50,7 +52,11 @@ impl Session {
                 );
                 let (response, cst, x_security_token) = self
                     .client
-                    .post_with_headers::<AuthResponse, AuthRequest>("/session", &auth_request, &headers)
+                    .post_with_headers::<AuthResponse, AuthRequest>(
+                        "/session",
+                        &auth_request,
+                        &headers,
+                    )
                     .await
                     .context("Failed to authenticate")?;
                 debug!("Authentication response v{}: {:?}", version, response);
@@ -64,7 +70,11 @@ impl Session {
                 );
                 let (response, cst, x_security_token) = self
                     .client
-                    .post_with_headers::<AuthResponseV3, AuthRequest>("/session", &auth_request, &headers)
+                    .post_with_headers::<AuthResponseV3, AuthRequest>(
+                        "/session",
+                        &auth_request,
+                        &headers,
+                    )
                     .await
                     .context("Failed to authenticate")?;
                 debug!("Authentication response v{}: {:?}", version, response);
@@ -76,11 +86,12 @@ impl Session {
         };
 
         debug!("Authenticating user: {}", self.config.credentials.username);
-        let auth_info : Option<AuthInfo> = Some(AuthInfo::new(
+        let auth_info: Option<AuthInfo> = Some(AuthInfo::new(
             auth_version_response,
             Instant::now() + Duration::from_secs(60),
             cst,
-            x_security_token));
+            x_security_token,
+        ));
 
         self.auth_info = auth_info;
 
@@ -146,7 +157,8 @@ impl Session {
         Ok(())
     }
 
-    pub async fn switch_account( // TODO: Refactor to use /session endpoint with PUT
+    pub async fn switch_account(
+        // TODO: Refactor to use /session endpoint with PUT
         &mut self,
         account_id: &str,
         set_default: Option<bool>,
@@ -169,7 +181,10 @@ impl Session {
         Ok(response)
     }
 
-    pub async fn get_session_details(&self, fetch_session_tokens: bool) -> anyhow::Result<SessionResponse> {
+    pub async fn get_session_details(
+        &self,
+        fetch_session_tokens: bool,
+    ) -> anyhow::Result<SessionResponse> {
         let endpoint = if fetch_session_tokens {
             "/session&fetchSessionTokens=true"
         } else {
@@ -184,16 +199,12 @@ impl Session {
 
         Ok(response)
     }
-
-
 }
 
 #[cfg(test)]
 mod tests_session {
     use super::*;
     use mockito::Server;
-
-    use std::time::Duration;
 
     fn create_test_config(server_url: &str) -> Config {
         let mut config = Config::new();
@@ -289,7 +300,7 @@ mod tests_session {
             .await;
 
         let config = create_test_config(&server.url());
-        let mut session = Session::new(config).unwrap();
+        let session = Session::new(config).unwrap();
 
         // let result = session.ensure_auth().await;
 
@@ -327,7 +338,7 @@ mod tests_session {
             .await;
 
         let config = create_test_config(&server.url());
-        let mut session = Session::new(config).unwrap();
+        let session = Session::new(config).unwrap();
 
         // session.authenticate(3).await.unwrap();
         // let result = session.ensure_auth().await;
@@ -365,7 +376,7 @@ mod tests_session {
 
         let mut config = create_test_config(&server.url());
         config.rest_api.timeout = 1; // Set timeout to 1 second for testing
-        let mut session = Session::new(config).unwrap();
+        let session = Session::new(config).unwrap();
 
         // session.authenticate(3).await.unwrap();
         // tokio::time::sleep(Duration::from_secs(2)).await;
