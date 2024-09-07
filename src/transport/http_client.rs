@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use reqwest::{header, Client, Response};
 use serde::{de::DeserializeOwned, Serialize};
+use std::fmt;
 use std::fmt::Debug;
 use std::time::Duration;
 use tracing::{debug, error, instrument};
@@ -189,6 +190,12 @@ impl IGHttpClient {
                 Ok(None)
             }
         }
+    }
+}
+
+impl fmt::Display for IGHttpClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{{\"base_url\":\"{}\"}}", self.base_url)
     }
 }
 

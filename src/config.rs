@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use std::env;
+use std::fmt;
 use std::fmt::Debug;
 use std::str::FromStr;
 use tracing::error;
@@ -32,6 +33,45 @@ pub struct RestApiConfig {
 pub struct WebSocketConfig {
     pub url: String,
     pub reconnect_interval: u64,
+}
+
+impl fmt::Display for Credentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{{\"username\":\"{}\",\"password\":\"[REDACTED]\",\"account_id\":\"[REDACTED]\",\"api_key\":\"[REDACTED]\",\"client_token\":{},\"account_token\":{}}}",
+               self.username,
+               self.client_token.as_ref().map_or("null".to_string(), |_| "\"[REDACTED]\"".to_string()),
+               self.account_token.as_ref().map_or("null".to_string(), |_| "\"[REDACTED]\"".to_string()))
+    }
+}
+
+impl fmt::Display for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{{\"credentials\":{},\"rest_api\":{},\"websocket\":{}}}",
+            self.credentials, self.rest_api, self.websocket
+        )
+    }
+}
+
+impl fmt::Display for RestApiConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{{\"base_url\":\"{}\",\"timeout\":{}}}",
+            self.base_url, self.timeout
+        )
+    }
+}
+
+impl fmt::Display for WebSocketConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{{\"url\":\"{}\",\"reconnect_interval\":{}}}",
+            self.url, self.reconnect_interval
+        )
+    }
 }
 
 pub fn get_env_or_default<T: FromStr>(env_var: &str, default: T) -> T
@@ -154,5 +194,124 @@ mod tests_config {
             assert_eq!(config.websocket.url, "wss://demo-apd.marketdatasystems.com");
             assert_eq!(config.websocket.reconnect_interval, 5);
         });
+    }
+}
+
+#[cfg(test)]
+mod tests_display {
+    use super::*;
+    use assert_json_diff::assert_json_eq;
+    use serde_json::json;
+
+    #[test]
+    fn test_credentials_display() {
+        let credentials = Credentials {
+            username: "user123".to_string(),
+            password: "pass123".to_string(),
+            account_id: "acc456".to_string(),
+            api_key: "key789".to_string(),
+            client_token: Some("ctoken".to_string()),
+            account_token: None,
+        };
+
+        let display_output = credentials.to_string();
+        let expected_json = json!({
+            "username": "user123",
+            "password": "[REDACTED]",
+            "account_id": "[REDACTED]",
+            "api_key": "[REDACTED]",
+            "client_token": "[REDACTED]",
+            "account_token": null
+        });
+
+        assert_json_eq!(
+            serde_json::from_str::<serde_json::Value>(&display_output).unwrap(),
+            expected_json
+        );
+    }
+
+    #[test]
+    fn test_rest_api_config_display() {
+        let rest_api_config = RestApiConfig {
+            base_url: "https://api.example.com".to_string(),
+            timeout: 30,
+        };
+
+        let display_output = rest_api_config.to_string();
+        let expected_json = json!({
+            "base_url": "https://api.example.com",
+            "timeout": 30
+        });
+
+        assert_json_eq!(
+            serde_json::from_str::<serde_json::Value>(&display_output).unwrap(),
+            expected_json
+        );
+    }
+
+    #[test]
+    fn test_websocket_config_display() {
+        let websocket_config = WebSocketConfig {
+            url: "wss://ws.example.com".to_string(),
+            reconnect_interval: 5,
+        };
+
+        let display_output = websocket_config.to_string();
+        let expected_json = json!({
+            "url": "wss://ws.example.com",
+            "reconnect_interval": 5
+        });
+
+        assert_json_eq!(
+            serde_json::from_str::<serde_json::Value>(&display_output).unwrap(),
+            expected_json
+        );
+    }
+
+    #[test]
+    fn test_config_display() {
+        let config = Config {
+            credentials: Credentials {
+                username: "user123".to_string(),
+                password: "pass123".to_string(),
+                account_id: "acc456".to_string(),
+                api_key: "key789".to_string(),
+                client_token: Some("ctoken".to_string()),
+                account_token: None,
+            },
+            rest_api: RestApiConfig {
+                base_url: "https://api.example.com".to_string(),
+                timeout: 30,
+            },
+            websocket: WebSocketConfig {
+                url: "wss://ws.example.com".to_string(),
+                reconnect_interval: 5,
+            },
+        };
+
+        let display_output = config.to_string();
+        let expected_json = json!({
+            "credentials": {
+                "username": "user123",
+                "password": "[REDACTED]",
+                "account_id": "[REDACTED]",
+                "api_key": "[REDACTED]",
+                "client_token": "[REDACTED]",
+                "account_token": null
+            },
+            "rest_api": {
+                "base_url": "https://api.example.com",
+                "timeout": 30
+            },
+            "websocket": {
+                "url": "wss://ws.example.com",
+                "reconnect_interval": 5
+            }
+        });
+
+        assert_json_eq!(
+            serde_json::from_str::<serde_json::Value>(&display_output).unwrap(),
+            expected_json
+        );
     }
 }

@@ -12,6 +12,7 @@ use crate::session::auth::{
 use crate::session::session_response::SessionResponse;
 use crate::transport::http_client::IGHttpClient;
 use anyhow::Context;
+use std::fmt;
 use std::time::{Duration, Instant};
 use tracing::{debug, instrument};
 
@@ -114,7 +115,8 @@ impl Session {
         self.authenticate(self.version).await // Default to v1 authentication
     }
 
-    pub fn get_auth_headers(&self) -> Option<(Option<String>, String, Option<String>)> { // (CST, Account ID, X-SECURITY-TOKEN)
+    pub fn get_auth_headers(&self) -> Option<(Option<String>, String, Option<String>)> {
+        // (CST, Account ID, X-SECURITY-TOKEN)
         if let Some(auth_info) = &self.auth_info {
             match &auth_info.auth_response {
                 V1(response) | V2(response) => {
@@ -192,12 +194,25 @@ impl Session {
     }
 }
 
+impl fmt::Display for Session {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{{\"client\":{},\"config\":{},\"auth_info\":{},\"version\":{}}}",
+            self.client,
+            self.config,
+            self.auth_info.as_ref().unwrap(),
+            self.version
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests_session {
     use super::*;
+    use crate::utils::logger::setup_logger;
     use mockito::Server;
     use serde_json::json;
-    use crate::utils::logger::setup_logger;
 
     fn create_test_config(server_url: &str) -> Config {
         let mut config = Config::new();
@@ -388,5 +403,120 @@ mod tests_session {
         // let result = session.ensure_auth().await;
         // assert!(result.is_ok());
         // mock.assert_async().await;
+    }
+}
+
+#[cfg(test)]
+mod tests_display {
+    use super::*;
+    use crate::config::{Credentials, RestApiConfig, WebSocketConfig};
+    use assert_json_diff::assert_json_eq;
+    use serde_json::json;
+    const FIXED_DURATION: Duration = Duration::from_secs(1_000_000_000);
+
+    #[test]
+    fn test_session_display() {
+        let fixed_instant = Instant::now() + FIXED_DURATION;
+
+        let session = Session {
+            client: IGHttpClient::new("https://api.example.com", "key789").unwrap(),
+            config: Config {
+                credentials: Credentials {
+                    username: "user123".to_string(),
+                    password: "pass123".to_string(),
+                    account_id: "acc456".to_string(),
+                    api_key: "key789".to_string(),
+                    client_token: Some("ctoken".to_string()),
+                    account_token: None,
+                },
+                rest_api: RestApiConfig {
+                    base_url: "https://api.example.com".to_string(),
+                    timeout: 30,
+                },
+                websocket: WebSocketConfig {
+                    url: "wss://ws.example.com".to_string(),
+                    reconnect_interval: 5,
+                },
+            },
+            auth_info: Some(AuthInfo {
+                auth_response: AuthVersionResponse::V1(AuthResponse {
+                    account_type: "".to_string(),
+                    account_info: Default::default(),
+                    currency_iso_code: "".to_string(),
+                    currency_symbol: "".to_string(),
+                    current_account_id: "".to_string(),
+                    lightstreamer_endpoint: "".to_string(),
+                    accounts: vec![],
+                    client_id: "".to_string(),
+                    timezone_offset: 0,
+                    has_active_demo_accounts: false,
+                    has_active_live_accounts: false,
+                    trailing_stops_enabled: false,
+                    rerouting_environment: None,
+                    dealing_enabled: false,
+                }),
+                expires_at: fixed_instant,
+                cst: Option::from("cst123".to_string()),
+                x_security_token: Option::from("token456".to_string()),
+            }),
+            version: 1,
+        };
+
+        let display_output = session.to_string();
+        let expected_json = json!({
+            "client": {
+                "base_url": "https://api.example.com"
+            },
+            "config": {
+                "credentials": {
+                    "username": "user123",
+                    "password": "[REDACTED]",
+                    "account_id": "[REDACTED]",
+                    "api_key": "[REDACTED]",
+                    "client_token": "[REDACTED]",
+                    "account_token": null
+                },
+                "rest_api": {
+                    "base_url": "https://api.example.com",
+                    "timeout": 30
+                },
+                "websocket": {
+                    "url": "wss://ws.example.com",
+                    "reconnect_interval": 5
+                }
+            },
+            "auth_info": {
+          "auth_response": {
+            "accountInfo": {
+              "available": 0.0,
+              "balance": 0.0,
+              "deposit": 0.0,
+              "profitLoss": 0.0
+            },
+            "accountType": "",
+            "accounts": [],
+            "clientId": "",
+            "currencyIsoCode": "",
+            "currencySymbol": "",
+            "currentAccountId": "",
+            "dealingEnabled": false,
+            "hasActiveDemoAccounts": false,
+            "hasActiveLiveAccounts": false,
+            "lightstreamerEndpoint": "",
+            "reroutingEnvironment": null,
+            "timezoneOffset": 0,
+            "trailingStopsEnabled": false
+          },
+          "cst": "[REDACTED]",
+          "expires_at": format!("{:?}", fixed_instant),
+          "x_security_token": "[REDACTED]"
+        },
+            "version": 1
+        });
+
+        assert_json_eq!(
+            serde_json::from_str::<serde_json::Value>(&display_output).unwrap(),
+            expected_json
+        );
     }
 }
