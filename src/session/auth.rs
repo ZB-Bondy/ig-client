@@ -70,11 +70,29 @@ pub struct OAuthToken {
 }
 
 #[derive(Debug)]
+pub(crate) enum AuthVersionResponse {
+    V1(AuthResponse),
+    V2(AuthResponse),
+    V3(AuthResponseV3),
+}
+
+#[derive(Debug)]
 pub(crate) struct AuthInfo {
-    auth_response: AuthResponse,
-    expires_at: Instant,
-    cst: String,
-    x_security_token: String,
+    pub(crate) auth_response: AuthVersionResponse,
+    pub(crate) expires_at: Instant,
+    cst: Option<String>,
+    x_security_token: Option<String>,
+}
+
+impl AuthInfo {
+    pub fn new(auth_response: AuthVersionResponse, expires_at: Instant, cst: Option<String>, x_security_token: Option<String>) -> Self {
+        Self {
+            auth_response,
+            expires_at,
+            cst,
+            x_security_token,
+        }
+    }
 }
 
 impl AuthRequest {
@@ -120,6 +138,16 @@ impl fmt::Display for OAuthToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{{\"access_token\":\"[REDACTED]\",\"refresh_token\":\"[REDACTED]\",\"scope\":\"{}\",\"token_type\":\"{}\",\"expires_in\":\"{}\"}}",
                self.scope, self.token_type, self.expires_in)
+    }
+}
+
+impl fmt::Display for AuthVersionResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AuthVersionResponse::V1(response) => write!(f, "{}", response),
+            AuthVersionResponse::V2(response) => write!(f, "{}", response),
+            AuthVersionResponse::V3(response) => write!(f, "{}", response),
+        }
     }
 }
 
@@ -330,12 +358,12 @@ mod tests_auth_info {
             dealing_enabled: true,
         };
 
-        let auth_info = AuthInfo {
-            auth_response,
+        let auth_info = AuthInfo::new(
+            AuthVersionResponse::V1(auth_response),
             expires_at,
-            cst: "cst123".to_string(),
-            x_security_token: "token456".to_string(),
-        };
+            Some("cst123".to_string()),
+            Some("token456".to_string()),
+        );
 
         let display_output = auth_info.to_string();
         let expected_json = json!({

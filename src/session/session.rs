@@ -3,12 +3,13 @@
     Email: jb@taunais.com 
     Date: 7/9/24
  ******************************************************************************/
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use anyhow::Context;
-use tracing::{debug, instrument};
+use tracing::{debug, error, instrument};
 use crate::config::Config;
 use crate::session::account::{AccountSwitchRequest, AccountSwitchResponse};
-use crate::session::auth::{AuthInfo, AuthRequest};
+use crate::session::auth::{AuthInfo, AuthRequest, AuthResponse, AuthResponseV3, AuthVersionResponse};
+use crate::session::auth::AuthVersionResponse::{V1, V3};
 use crate::session::session_response::SessionResponse;
 use crate::transport::http_client::IGHttpClient;
 
@@ -31,66 +32,73 @@ impl Session {
 
     #[instrument(skip(self))]
     pub async fn authenticate(&mut self, version: u8) -> anyhow::Result<()> {
-        if version != 2 {
-            return Err(anyhow::anyhow!(
-                "Unsupported authentication version: {}",
-                version
-            ));
-        }
-
-        debug!("Authenticating user: {}", self.config.credentials.username);
-
-        let auth_request = AuthRequest::new(
-            self.config.credentials.username.clone(),
-             self.config.credentials.password.clone(),
-            Some(true),
-        );
-
         let version_header = ("version".to_string(), version.to_string());
         let token_header = (
             "x-ig-api-key".to_string(),
             self.config.credentials.api_key.clone(),
         );
         let headers = vec![version_header, token_header];
-
         debug!("Headers: {:?}", headers);
-        let (response, cst, x_security_token) = self
-            .client
-            .post_with_headers::<crate::session::auth::AuthResponse, AuthRequest>("/session", &auth_request, &headers)
-            .await
-            .context("Failed to authenticate")?;
-        debug!("Authentication response: {:?}", response);
 
-        let auth_response = response;
+        let (cst, x_security_token): (Option<String>, Option<String>) = (None, None);
+        let auth_version_response: AuthVersionResponse =  match version {
+            1 | 2 => {
+                let auth_request = AuthRequest::new(
+                    self.config.credentials.username.clone(),
+                    self.config.credentials.password.clone(),
+                    Some(false),
+                );
+                let (response, cst, x_security_token) = self
+                    .client
+                    .post_with_headers::<AuthResponse, AuthRequest>("/session", &auth_request, &headers)
+                    .await
+                    .context("Failed to authenticate")?;
+                debug!("Authentication response v{}: {:?}", version, response);
+                V1(response)
+            }
+            3 => {
+                let auth_request = AuthRequest::new(
+                    self.config.credentials.username.clone(),
+                    self.config.credentials.password.clone(),
+                    None,
+                );
+                let (response, cst, x_security_token) = self
+                    .client
+                    .post_with_headers::<AuthResponseV3, AuthRequest>("/session", &auth_request, &headers)
+                    .await
+                    .context("Failed to authenticate")?;
+                debug!("Authentication response v{}: {:?}", version, response);
+                V3(response)
+            }
+            _ => {
+                panic!("Unsupported authentication version")
+            }
+        };
 
-        // let expires_in = if let  oauth_token = x_security_token {
-        //     oauth_token.expires_in.parse::<u64>().unwrap_or(60)
-        // } else {
-        //     self.config.rest_api.timeout
-        // };
+        debug!("Authenticating user: {}", self.config.credentials.username);
+        let auth_info : Option<AuthInfo> = Some(AuthInfo::new(
+            auth_version_response,
+            Instant::now() + Duration::from_secs(60),
+            cst,
+            x_security_token));
 
-        // self.auth_info = Some(AuthInfo {
-        //     auth_response,
-        //     expires_at: Instant::now() + Duration::from_secs(expires_in),
-        //     cst,
-        //     x_security_token,
-        // });
+        self.auth_info = auth_info;
 
         debug!("Authentication successful");
         Ok(())
     }
 
-    // #[instrument(skip(self))]
-    // pub async fn ensure_auth(&mut self) -> anyhow::Result<()> {
-    //     if let Some(auth_info) = &self.auth_info {
-    //         if auth_info.expires_at > Instant::now() {
-    //             return Ok(());
-    //         }
-    //     }
-    //
-    //     // If we reach here, we need to reauthenticate
-    //     self.authenticate(3).await // Default to v3 authentication
-    // }
+    #[instrument(skip(self))]
+    pub async fn ensure_auth(&mut self) -> anyhow::Result<()> {
+        if let Some(auth_info) = &self.auth_info {
+            if auth_info.expires_at > Instant::now() {
+                return Ok(());
+            }
+        }
+
+        // TODO: If we reach here, we need to reauthenticate or refresh the token
+        self.authenticate(1).await // Default to v1 authentication
+    }
 
     pub fn get_auth_headers(&self) -> Option<(String, String, String)> {
         // self.auth_info.as_ref().map(|info| {
@@ -138,28 +146,28 @@ impl Session {
         Ok(())
     }
 
-    // pub async fn switch_account(
-    //     &mut self,
-    //     account_id: &str,
-    //     set_default: Option<bool>,
-    // ) -> anyhow::Result<AccountSwitchResponse> {
-    //     let request = AccountSwitchRequest {
-    //         account_id: account_id.to_string(),
-    //         default_account: set_default,
-    //     };
-    //
-    //     let response: AccountSwitchResponse = self
-    //         .client
-    //         .put("/session", &request)
-    //         .await
-    //         .context("Failed to switch account")?;
-    //
-    //     if let Some(auth_info) = &mut self.auth_info {
-    //         auth_info.auth_response.current_account_id= account_id.to_string();
-    //     }
-    //
-    //     Ok(response)
-    // }
+    pub async fn switch_account( // TODO: Refactor to use /session endpoint with PUT
+        &mut self,
+        account_id: &str,
+        set_default: Option<bool>,
+    ) -> anyhow::Result<AccountSwitchResponse> {
+        let request = AccountSwitchRequest {
+            account_id: account_id.to_string(),
+            default_account: set_default,
+        };
+
+        let response: AccountSwitchResponse = self
+            .client
+            .put("/session", &request)
+            .await
+            .context("Failed to switch account")?;
+
+        if let Some(auth_info) = &mut self.auth_info {
+            // auth_info.auth_response.current_account_id= account_id.to_string();
+        }
+
+        Ok(response)
+    }
 
     pub async fn get_session_details(&self, fetch_session_tokens: bool) -> anyhow::Result<SessionResponse> {
         let endpoint = if fetch_session_tokens {
@@ -229,6 +237,7 @@ mod tests_session {
         let result = session.authenticate(3).await;
         assert!(result.is_ok());
         assert!(session.auth_info.is_some());
+
         mock.assert_async().await;
     }
 

@@ -33,9 +33,9 @@ pub(crate) struct AccountInfo {
 #[derive(Debug, Serialize)]
 pub(crate) struct AccountSwitchRequest {
     #[serde(rename = "accountId")]
-    account_id: String,
+    pub(crate) account_id: String,
     #[serde(rename = "defaultAccount")]
-    default_account: Option<bool>,
+    pub(crate) default_account: Option<bool>,
 }
 
 #[allow(dead_code)]

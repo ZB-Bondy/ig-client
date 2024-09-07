@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use ig_client::config::Config;
-use ig_client::session::auth::Session;
+use ig_client::session::session::Session;
 use ig_client::utils::logger::setup_logger;
 use tracing::{error, info};
 
@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
 
     let mut session = Session::new(config)?;
 
-    match session.authenticate(2).await {
+    match session.authenticate(3).await {
         Ok(()) => {
             info!("REST API authentication successful");
         }

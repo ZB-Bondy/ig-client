@@ -61,7 +61,7 @@ impl IGHttpClient {
         &self,
         endpoint: &str,
         body: &B,
-    ) -> Result<(T, String, String)> {
+    ) -> Result<(T, Option<String>, Option<String>)>{
         let url = format!("{}{}", self.base_url, endpoint);
         debug!("Sending POST request to {}", url);
 
@@ -81,11 +81,11 @@ impl IGHttpClient {
         endpoint: &str,
         body: &B,
         headers: &[(String, String)],
-    ) -> Result<(T, String, String)> {
+    ) -> Result<(T, Option<String>, Option<String>)> {
         let url = format!("{}{}", self.base_url, endpoint);
         debug!("Sending POST request with custom headers to {}", url);
 
-        let body_json = serde_json::to_string(body).unwrap();
+        let body_json = serde_json::to_string(body)?;
         debug!("Serialized Body: {}", body_json);
 
         let mut request = self.client.post(&url).json(body);
@@ -98,10 +98,16 @@ impl IGHttpClient {
 
         debug!("Response: {:?}", response);
 
-        let cst = Self::extract_header(&response, "CST")?;
-        let x_security_token = Self::extract_header(&response, "X-SECURITY-TOKEN")?;
+        let cst: Option<String> = Self::extract_header(&response, "CST").unwrap_or_else(|e| {
+            error!("Failed to extract CST header: {:?}", e);
+            None
+        });
+        let x_security_token: Option<String> = Self::extract_header(&response, "X-SECURITY-TOKEN").unwrap_or_else(|e| {
+            error!("Failed to extract X-SECURITY-TOKEN header: {:?}", e);
+            None
+        });
 
-        debug!("CST: {}, X-SECURITY-TOKEN: {}", cst, x_security_token);
+        // debug!("CST: {}, X-SECURITY-TOKEN: {}", cst, x_security_token);
 
         let body = match Self::handle_response(response).await {
             Ok(body) => body,
@@ -169,13 +175,20 @@ impl IGHttpClient {
         }
     }
 
-    fn extract_header(response: &Response, header_name: &str) -> Result<String> {
-        response
+    fn extract_header(response: &Response, header_name: &str) -> Result<Option<String>> {
+        match response
             .headers()
             .get(header_name)
             .and_then(|h| h.to_str().ok())
-            .map(String::from)
-            .context(format!("Failed to extract {} header", header_name))
+            .map(String::from) {
+            Some(header_value) => {
+                Ok(Some(header_value))
+            }
+            None => {
+                debug!("Header {} not found in response", header_name);
+                Ok(None)
+            }
+        }
     }
 }
 
@@ -235,8 +248,8 @@ mod tests_ig_http_client {
         info!("Result: {:?}", result);
 
         assert_eq!(result["message"], "created");
-        assert_eq!(cst, "test_cst");
-        assert_eq!(x_security_token, "test_token");
+        assert_eq!(cst.unwrap(), "test_cst");
+        assert_eq!(x_security_token.unwrap(), "test_token");
 
         mock.assert();
     }
@@ -266,8 +279,8 @@ mod tests_ig_http_client {
             .unwrap();
 
         assert_eq!(result["message"], "created_with_headers");
-        assert_eq!(cst, "cst");
-        assert_eq!(x_security_token, "x_security_token");
+        assert_eq!(cst.unwrap(), "test_cst");
+        assert_eq!(x_security_token.unwrap(), "test_token");
         mock.assert();
     }
 
@@ -428,14 +441,14 @@ mod tests_post {
 
         let client = IGHttpClient::new(&server.url(), "test-api-key").unwrap();
 
-        let (response, cst, x_security_token): (serde_json::Value, String, String) = client
+        let (response, cst, x_security_token): (serde_json::Value, Option<String>, Option<String>) = client
             .post("/test-endpoint", &json!({"request_key": "request_value"}))
             .await
             .unwrap();
 
         assert_eq!(response, json!({"key": "value"}));
-        assert_eq!(cst, "test-cst");
-        assert_eq!(x_security_token, "test-security-token");
+        assert_eq!(cst.unwrap(), "test-cst");
+        assert_eq!(x_security_token.unwrap(), "test-security-token");
     }
 
     #[tokio::test]
@@ -450,7 +463,7 @@ mod tests_post {
 
         let client = IGHttpClient::new(&server.url(), "test-api-key").unwrap();
 
-        let result: Result<(serde_json::Value, String, String)> = client
+        let result: Result<(serde_json::Value, Option<String>, Option<String>)> = client
             .post("/test-endpoint", &json!({"request_key": "request_value"}))
             .await;
 
