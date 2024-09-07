@@ -40,16 +40,18 @@ pub(crate) struct AccountSwitchRequest {
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
+#[derive(Default)]
 pub struct AccountSwitchResponse {
     #[serde(rename = "dealingEnabled")]
     dealing_enabled: bool,
     #[serde(rename = "hasActiveDemoAccounts")]
     has_active_demo_accounts: bool,
-    #[serde(rename = "dealinhasActiveLiveAccountsgEnabled")]
+    #[serde(rename = "hasActiveLiveAccounts")]
     has_active_live_accounts: bool,
     #[serde(rename = "trailingStopsEnabled")]
     trailing_stops_enabled: bool,
 }
+
 
 impl Default for AccountInfo {
     fn default() -> Self {

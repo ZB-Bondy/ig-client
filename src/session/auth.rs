@@ -81,6 +81,27 @@ pub(crate) struct AuthResponse {
     pub dealing_enabled: bool,
 }
 
+impl Default for AuthResponse {
+    fn default() -> Self {
+        AuthResponse {
+            account_type: "".to_string(),
+            account_info: AccountInfo::default(),
+            currency_iso_code: "".to_string(),
+            currency_symbol: "".to_string(),
+            current_account_id: "".to_string(),
+            lightstreamer_endpoint: "".to_string(),
+            accounts: vec![],
+            client_id: "".to_string(),
+            timezone_offset: 0,
+            has_active_demo_accounts: false,
+            has_active_live_accounts: false,
+            trailing_stops_enabled: false,
+            rerouting_environment: None,
+            dealing_enabled: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct OAuthToken {
     pub access_token: String,
@@ -95,6 +116,12 @@ pub(crate) enum AuthVersionResponse {
     V1(AuthResponse),
     V2(AuthResponse),
     V3(AuthResponseV3),
+}
+
+impl Default for AuthVersionResponse {
+    fn default() -> Self {
+        AuthVersionResponse::V1(AuthResponse::default())
+    }
 }
 
 #[derive(Debug)]

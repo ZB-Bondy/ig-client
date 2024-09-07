@@ -17,7 +17,7 @@ use chrono::Utc;
 use std::collections::HashMap;
 use std::fmt;
 use std::time::Duration;
-use tracing::{debug, info, instrument};
+use tracing::{debug, error, instrument};
 
 #[derive(Debug)]
 pub struct Session {
@@ -43,9 +43,9 @@ impl Session {
         self.version = version;
 
         let headers = self.build_headers(None);
-        let  mut oauth_token =  None;
+        let mut oauth_token = None;
 
-        let (auth_version_response,cst, x_security_token) = match version {
+        let (auth_version_response, cst, x_security_token) = match version {
             1 | 2 => self.authenticate_v1_v2(headers).await?,
             3 => self.authenticate_v3(headers, &mut oauth_token).await?,
             _ => panic!("Unsupported authentication version"),
@@ -75,13 +75,11 @@ impl Session {
             TOKEN_HEADER_KEY.to_string(),
             self.config.credentials.api_key.clone(),
         );
-        debug!("BUILD_HEADERS: {:?}", headers);
         if let Some(other_headers) = other {
             for (key, value) in other_headers {
                 headers.insert(key, value);
             }
         }
-        debug!("BUILD_HEADERS: {:?}", headers);
         Some(headers)
     }
 
@@ -189,7 +187,7 @@ impl Session {
     }
 
     pub async fn switch_account(
-        // TODO: Refactor to use /session endpoint with PUT
+        // The server randomly returns a 401 Unauthorized, Body: {"errorCode":"error.security.account-token-invalid"}
         &mut self,
         account_id: &str,
         set_default: Option<bool>,
@@ -199,15 +197,29 @@ impl Session {
             default_account: set_default,
         };
 
-        let response: AccountSwitchResponse = self
-            .client
-            .put("/session", &request)
-            .await
-            .context("Failed to switch account")?;
+        let headers = match self.get_auth_headers() {
+            Ok(headers) => self.build_headers(Some(headers)),
+            Err(_) => None,
+        };
 
-        if let Some(auth_info) = &mut self.auth_info {
-            // auth_info.auth_response.current_account_id= account_id.to_string();
-        }
+        let response: AccountSwitchResponse =
+            match self.client.put("/session", &request, &headers).await {
+                Ok(response) => {
+                    if let Some(auth_info) = &mut self.auth_info {
+                        match auth_info.auth_response {
+                            V1(ref mut r) | V2(ref mut r) => {
+                                r.current_account_id = account_id.to_string()
+                            }
+                            V3(ref mut r) => r.account_id = account_id.to_string(),
+                        }
+                    }
+                    response
+                }
+                Err(e) => {
+                    error!("Error switching account: {:?}", e);
+                    return Ok(AccountSwitchResponse::default());
+                }
+            };
 
         Ok(response)
     }
@@ -222,11 +234,11 @@ impl Session {
             "/session"
         };
 
-        let mut headers = match self.get_auth_headers() {
+        let headers = match self.get_auth_headers() {
             Ok(headers) => Some(headers),
             Err(_) => None,
         };
-        // headers = self.build_headers(headers);
+
         debug!("GET_SESSION_DETAILS Headers: {:?}", headers);
 
         let response: SessionResponse = self

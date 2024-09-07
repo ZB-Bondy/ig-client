@@ -1,4 +1,4 @@
-mod account;
+pub(crate) mod account;
 pub mod auth;
 pub mod session;
 mod session_response;

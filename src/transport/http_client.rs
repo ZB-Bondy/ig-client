@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Debug;
 use std::time::Duration;
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, instrument};
 
 /// Represents the HTTP client for interacting with the IG API.
 #[derive(Debug)]
@@ -135,17 +135,35 @@ impl IGHttpClient {
 
     /// Sends a PUT request to the specified endpoint.
     #[instrument(skip(self, body))]
-    pub async fn put<T: DeserializeOwned + Debug, B: Serialize>(
+    pub async fn put<T: DeserializeOwned + Debug + Default, B: Serialize>(
         &self,
         endpoint: &str,
         body: &B,
+        headers: &Option<HashMap<String, String>>,
     ) -> Result<T> {
         let url = format!("{}{}", self.base_url, endpoint);
         debug!("Sending PUT request to {}", url);
 
-        let response = self.client.put(&url).json(body).send().await?;
+        let mut request = self.client.put(&url).json(body);
+        if let Some(headers) = headers {
+            for (key, value) in headers {
+                request = request.header(key, value);
+            }
+        }
 
-        Self::handle_response(response).await
+        let response = match request.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                anyhow::bail!("Failed to send PUT request: {:?}", e)
+            }
+        };
+
+        if response.status().is_success() {
+            Self::handle_response::<T>(response).await
+        } else {
+            error!("API request failed. Status: {}", response.status());
+            Ok(T::default())
+        }
     }
 
     /// Sends a DELETE request to the specified endpoint.
@@ -156,7 +174,12 @@ impl IGHttpClient {
 
         let response = self.client.delete(&url).send().await?;
 
-        Self::handle_response(response).await
+        match Self::handle_response(response).await {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                anyhow::bail!("Failed to handle DELETE response: {:?}", e)
+            }
+        }
     }
 
     async fn handle_response<T: DeserializeOwned + Debug>(response: Response) -> Result<T> {
@@ -174,15 +197,11 @@ impl IGHttpClient {
                 serde_json::from_str(&body_text).context("Failed to deserialize response body")?;
             Ok(body)
         } else {
-            error!(
+            let err = format!(
                 "API request failed. Status: {}, Body: {}",
                 status, body_text
             );
-            anyhow::bail!(
-                "API request failed. Status: {}, Body: {}",
-                status,
-                body_text
-            );
+            anyhow::bail!(err)
         }
     }
 
@@ -319,7 +338,8 @@ mod tests_ig_http_client {
 
         let client = create_client(&server);
         let body = json!({"key": "new_value"});
-        let result: serde_json::Value = client.put("/test", &body).await.unwrap();
+        let headers = Some(HashMap::new());
+        let result: serde_json::Value = client.put("/test", &body, &headers).await.unwrap();
 
         assert_eq!(result["message"], "updated");
         mock.assert();
