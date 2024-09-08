@@ -29,14 +29,14 @@ async fn main() -> Result<()> {
     }
 
 
-    // match session.get_session_details(false).await {
-    //     Ok(ar) => {
-    //         info!("Account details: {:?}", ar);
-    //     }
-    //     Err(e) => {
-    //         error!("REST API get_session_details error: {:?}", e);
-    //     }
-    // }
+    match session.get_session_details(false).await {
+        Ok(ar) => {
+            info!("Account details: {:?}", ar);
+        }
+        Err(e) => {
+            error!("REST API get_session_details error: {:?}", e);
+        }
+    }
 
     match session.switch_account("ZR24W", Some(false)).await {
         Ok(ar) => {
@@ -56,14 +56,14 @@ async fn main() -> Result<()> {
     //     }
     // }
 
-    // match session.get_session_details(false).await {
-    //     Ok(ar) => {
-    //         info!("Account details: {:?}", ar);
-    //     }
-    //     Err(e) => {
-    //         error!("REST API get_session_details error: {:?}", e);
-    //     }
-    // }
+    match session.get_session_details(false).await {
+        Ok(ar) => {
+            info!("Account details: {:?}", ar);
+        }
+        Err(e) => {
+            error!("REST API get_session_details error: {:?}", e);
+        }
+    }
 
     info!("Session finish successful");
     Ok(())
