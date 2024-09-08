@@ -100,6 +100,9 @@ impl Session {
             .context("Failed to authenticate")?;
         debug!("A,uthentication response v{}: {:?}", self.version, response);
 
+        debug!("CST: {:?}", cst);
+        debug!("X-Security-Token: {:?}", x_security_token);
+
         Ok((V1(response), cst, x_security_token))
     }
 
@@ -197,10 +200,11 @@ impl Session {
             default_account: set_default,
         };
 
-        let headers = match self.get_auth_headers() {
+        let mut headers = match self.get_auth_headers() {
             Ok(headers) => self.build_headers(Some(headers)),
             Err(_) => None,
         };
+        headers.get_or_insert_with(HashMap::new).insert("version".to_string(), "1".to_string());
 
         let response: AccountSwitchResponse =
             match self.client.put("/session", &request, &headers).await {
@@ -208,16 +212,18 @@ impl Session {
                     if let Some(auth_info) = &mut self.auth_info {
                         match auth_info.auth_response {
                             V1(ref mut r) | V2(ref mut r) => {
+                                auth_info.x_security_token = IGHttpClient::extract_x_security_token(&response.1);
                                 r.current_account_id = account_id.to_string()
                             }
                             V3(ref mut r) => r.account_id = account_id.to_string(),
                         }
                     }
-                    response
+                    debug!("HEADERS: {:?}", response.1);
+
+                    response.0
                 }
                 Err(e) => {
-                    error!("Error switching account: {:?}", e);
-                    return Ok(AccountSwitchResponse::default());
+                    anyhow::bail!("Error switching account: {:?}", e)
                 }
             };
 
@@ -234,19 +240,24 @@ impl Session {
             "/session"
         };
 
-        let headers = match self.get_auth_headers() {
-            Ok(headers) => Some(headers),
+        let mut headers = match self.get_auth_headers() {
+            Ok(headers) => self.build_headers(Some(headers)),
             Err(_) => None,
         };
 
+        headers.get_or_insert_with(HashMap::new).insert("version".to_string(), "1".to_string());
+
         debug!("GET_SESSION_DETAILS Headers: {:?}", headers);
 
-        let response: SessionResponse = self
+        let response: SessionResponse = match self
             .client
             .get(endpoint, headers)
-            .await
-            .context("Failed to get session details")?;
-
+            .await {
+                Ok(response) => response,
+                Err(e) => {
+                    anyhow::bail!("Session details: {:?}", e)
+                }
+            };
         Ok(response)
     }
 }

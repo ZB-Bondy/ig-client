@@ -10,6 +10,7 @@ use ig_client::session::session::Session;
 use ig_client::utils::logger::setup_logger;
 use tracing::{error, info};
 
+
 #[tokio::main]
 async fn main() -> Result<()> {
     setup_logger();
@@ -18,7 +19,7 @@ async fn main() -> Result<()> {
 
     let mut session = Session::new(config)?;
 
-    match session.authenticate(1).await {
+    match session.authenticate(2).await {
         Ok(()) => {
             info!("REST API authentication successful");
         }
@@ -26,6 +27,7 @@ async fn main() -> Result<()> {
             error!("REST API authentication error: {:?}", e);
         }
     }
+
 
     // match session.get_session_details(false).await {
     //     Ok(ar) => {
@@ -41,9 +43,28 @@ async fn main() -> Result<()> {
             info!("Account details: {:?}", ar);
         }
         Err(e) => {
-            error!("REST API get_session_details error: {:?}", e);
+            error!("REST API switch_account error: {:?}", e);
         }
     }
 
+    // match session.authenticate(2).await {
+    //     Ok(()) => {
+    //         info!("REST API authentication successful");
+    //     }
+    //     Err(e) => {
+    //         error!("REST API authentication error: {:?}", e);
+    //     }
+    // }
+
+    // match session.get_session_details(false).await {
+    //     Ok(ar) => {
+    //         info!("Account details: {:?}", ar);
+    //     }
+    //     Err(e) => {
+    //         error!("REST API get_session_details error: {:?}", e);
+    //     }
+    // }
+
+    info!("Session finish successful");
     Ok(())
 }

@@ -54,6 +54,7 @@ futures-util = "0.3.30"
 futures = "0.3.30"
 rust_decimal = "1.9.0"
 rust_decimal_macros = "1.9.0"
+log = "0.4.22"
 
 [dev-dependencies]
 assert-json-diff = "2.0.2"

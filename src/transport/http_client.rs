@@ -1,10 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use reqwest::{header, Client, Response};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Debug;
 use std::time::Duration;
+use reqwest::header::HeaderMap;
 use tracing::{debug, error, instrument};
 
 /// Represents the HTTP client for interacting with the IG API.
@@ -48,7 +49,7 @@ impl IGHttpClient {
         headers: Option<HashMap<String, String>>,
     ) -> Result<T> {
         let url = format!("{}{}", self.base_url, endpoint);
-        debug!("Sending GET request to {}", url);
+        debug!("Sending GET request to {} with headers {:?}", url, headers.clone().unwrap());
 
         let mut request = self.client.get(&url);
         if let Some(headers) = headers {
@@ -64,7 +65,13 @@ impl IGHttpClient {
             }
         };
 
-        Self::handle_response(response).await
+        let status = response.status();
+        if status.is_success() {
+            debug!("Response GET Status: {}", status);
+            Self::handle_response::<T>(response).await
+        } else {
+            anyhow::bail!("GET response status: {:?} {}", status, response.text().await?)
+        }
     }
 
     /// Sends a POST request to the specified endpoint.
@@ -82,8 +89,17 @@ impl IGHttpClient {
         let cst = Self::extract_header(&response, "CST")?;
         let x_security_token = Self::extract_header(&response, "X-SECURITY-TOKEN")?;
 
-        let body = Self::handle_response(response).await?;
-        Ok((body, cst, x_security_token))
+        // let body = Self::handle_response(response).await?;
+        // Ok((body.unwrap(), cst, x_security_token))
+
+        let status = response.status();
+        if status.is_success() {
+            let body = Self::handle_response::<T>(response).await?;
+            debug!("Response body: {:?}", body);
+            Ok((body, cst, x_security_token))
+        } else {
+            anyhow::bail!("POST response status: {:?} {}", status, response.text().await?)
+        }
     }
 
     /// Sends a POST request with custom headers to the specified endpoint.
@@ -121,16 +137,14 @@ impl IGHttpClient {
                 None
             });
 
-        let body = match Self::handle_response(response).await {
-            Ok(body) => body,
-            Err(e) => {
-                error!("Failed to handle response: {:?}", e);
-                anyhow::bail!("Failed to handle response: {:?}", e)
-            }
-        };
-        debug!("Response body: {:?}", body);
-
-        Ok((body, cst, x_security_token))
+        let status = response.status();
+        if status.is_success() {
+            let body = Self::handle_response::<T>(response).await?;
+            debug!("Response body: {:?}", body);
+            Ok((body, cst, x_security_token))
+        } else {
+            anyhow::bail!("POST_WITH_HEADERS response status: {:?} {}", status, response.text().await?)
+        }
     }
 
     /// Sends a PUT request to the specified endpoint.
@@ -140,7 +154,7 @@ impl IGHttpClient {
         endpoint: &str,
         body: &B,
         headers: &Option<HashMap<String, String>>,
-    ) -> Result<T> {
+    ) -> Result<(T, HeaderMap)> {
         let url = format!("{}{}", self.base_url, endpoint);
         debug!("Sending PUT request to {}", url);
 
@@ -151,18 +165,19 @@ impl IGHttpClient {
             }
         }
 
-        let response = match request.send().await {
-            Ok(r) => r,
-            Err(e) => {
-                anyhow::bail!("Failed to send PUT request: {:?}", e)
-            }
-        };
+        let response = request.send().await.context("Failed to send PUT request")?;
 
-        if response.status().is_success() {
-            Self::handle_response::<T>(response).await
+        let status = response.status();
+        let response_headers = response.headers().clone();
+
+        if status.is_success() {
+            let answer = Self::handle_response::<T>(response)
+                .await
+                .context("Failed to handle successful response")?;
+            Ok((answer, response_headers))
         } else {
-            error!("API request failed. Status: {}", response.status());
-            Ok(T::default())
+            let error_body = response.text().await.context("Failed to read error response body")?;
+            anyhow::bail!("PUT request failed. Status: {}, Body: {}", status, error_body)
         }
     }
 
@@ -174,37 +189,72 @@ impl IGHttpClient {
 
         let response = self.client.delete(&url).send().await?;
 
-        match Self::handle_response(response).await {
-            Ok(r) => Ok(r),
-            Err(e) => {
-                anyhow::bail!("Failed to handle DELETE response: {:?}", e)
-            }
+        let status = response.status();
+        if status.is_success() {
+            Self::handle_response::<T>(response).await
+        } else {
+            anyhow::bail!("DELETE status: {:?}", status)
         }
     }
 
+    /// Handles the HTTP response by reading its body and attempting to deserialize
+    /// it into the specified type `T`.
+    ///
+    /// This function performs the following steps:
+    /// 1. Reads the status of the HTTP response.
+    /// 2. Asynchronously reads the body of the response as text.
+    /// 3. Logs the status and body for debugging purposes.
+    /// 4. If the response status indicates success, it attempts to parse the body
+    ///    as JSON into type `T`.
+    /// 5. In case of successful parsing, it returns `Ok(Some(body))`.
+    /// 6. If the status is not successful or parsing fails, it logs an error and
+    ///    returns `Ok(None)`.
+    ///
+    /// # Type Parameters
+    /// - `T`: The type into which the response body should be deserialized.
+    ///         This type must implement both `DeserializeOwned` and `Debug` traits.
+    ///
+    /// # Arguments
+    /// - `response`: The HTTP response to be handled of type `Response`.
+    ///
+    /// # Returns
+    /// - `Result<Option<T>>`: Returns `Ok(Some(T))` if the response is successful
+    ///   and the body is successfully parsed as JSON.
+    ///   Returns `Ok(None)` if the response status is not successful or JSON parsing fails.
+    ///   In both cases, in case of any error encountered during reading or parsing, an
+    ///   appropriate context will be provided.
+    ///
     async fn handle_response<T: DeserializeOwned + Debug>(response: Response) -> Result<T> {
         let status = response.status();
-        let body_text = response
-            .text()
-            .await
-            .context("Failed to read response body")?;
-
-        debug!("Response Status: {}", status);
-        debug!("Response Body: {}", body_text);
-
         if status.is_success() {
-            let body: T =
-                serde_json::from_str(&body_text).context("Failed to deserialize response body")?;
+            let body_text = response
+                .text()
+                .await
+                .context("Failed to read response body")?;
+            debug!("Response Status: {}", status);
+            debug!("Response Body: {}", body_text);
+            let body: T = serde_json::from_str(&body_text).context("Failed to parse JSON")?;
             Ok(body)
         } else {
-            let err = format!(
-                "API request failed. Status: {}, Body: {}",
-                status, body_text
-            );
-            anyhow::bail!(err)
+            anyhow::bail!("Handling response. Status: {} ", status)
         }
     }
 
+    /// Extracts the value of a specified header from an HTTP response.
+    ///
+    /// This function takes a reference to a `Response` and a header name as input, and returns
+    /// a `Result` containing an `Option` with the value of the header if it is found in the response.
+    /// If the header is not found, it returns `Ok(None)`.
+    ///
+    /// # Parameters
+    /// - `response`: A reference to the `Response` object from which to extract the header.
+    /// - `header_name`: The name of the header to extract.
+    ///
+    /// # Returns
+    /// - `Ok(Some(String))`: If the header is found, an `Option` containing the header value as a `String`.
+    /// - `Ok(None)`: If the header is not found.
+    /// - `Err`: If there is an error in processing the header.
+    ///
     fn extract_header(response: &Response, header_name: &str) -> Result<Option<String>> {
         match response
             .headers()
@@ -218,6 +268,18 @@ impl IGHttpClient {
                 Ok(None)
             }
         }
+    }
+
+    pub(crate) fn extract_x_security_token(headers: &HeaderMap) -> Option<String> {
+        headers.get("X-SECURITY-TOKEN")
+            .and_then(|value| value.to_str().ok())
+            .map(String::from)
+    }
+
+    pub(crate) fn extract_cst(headers: &HeaderMap) -> Option<String> {
+        headers.get("CST")
+            .and_then(|value| value.to_str().ok())
+            .map(String::from)
     }
 }
 
@@ -506,5 +568,72 @@ mod tests_post {
             .await;
 
         assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod tests_handle_response {
+    use super::*;
+    use mockito::{Server, Mock, ServerGuard};
+    use serde::Deserialize;
+    use reqwest::Client;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct TestResponse {
+        message: String,
+    }
+
+    async fn setup_mock_server(status: usize, body: &str) -> (ServerGuard, Mock) {
+        let mut server = Server::new_async().await;
+        let mock = server.mock("GET", "/test")
+            .with_status(status)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create();
+
+        (server, mock)
+    }
+
+    #[tokio::test]
+    async fn test_handle_response_success() {
+        let (server, mock) = setup_mock_server(200, r#"{"message": "success"}"#).await;
+
+        let client = Client::new();
+        let response = client.get(&format!("{}/test", server.url())).send().await.unwrap();
+
+        let result: Option<TestResponse> = IGHttpClient::handle_response(response).await.unwrap();
+
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), TestResponse { message: "success".to_string() });
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_handle_response_error() {
+        let (server, mock) = setup_mock_server(404, r#"{"error": "not found"}"#).await;
+
+        let client = Client::new();
+        let response = client.get(&format!("{}/test", server.url())).send().await.unwrap();
+
+        let result: Option<TestResponse> = IGHttpClient::handle_response(response).await.unwrap();
+
+        assert!(result.is_none());
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_handle_response_invalid_json() {
+        let (server, mock) = setup_mock_server(200, r#"{"message": "invalid json"#).await;
+
+        let client = Client::new();
+        let response = client.get(&format!("{}/test", server.url())).send().await.unwrap();
+
+        let result: Result<Option<TestResponse>> = IGHttpClient::handle_response(response).await;
+
+        assert!(result.is_err());
+
+        mock.assert_async().await;
     }
 }
