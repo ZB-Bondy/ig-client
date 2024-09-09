@@ -191,7 +191,7 @@ impl fmt::Display for AuthResponse {
                self.has_active_live_accounts, self.trailing_stops_enabled,
                self.rerouting_environment.as_ref().map_or("null".to_string(), |s| format!("\"{}\"", s)),
                self.dealing_enabled)
-    }
+
 }
 
 impl fmt::Display for OAuthToken {

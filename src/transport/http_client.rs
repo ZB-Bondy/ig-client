@@ -3,79 +3,13 @@ use reqwest::{header, Client, Response};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
+use std::ptr::addr_of_mut;
 use std::time::Duration;
-use log::warn;
+use aes_gcm::aes::cipher::impl_simple_block_encdec;
 use reqwest::header::HeaderMap;
 use tracing::{debug, error, instrument};
-
-#[derive(Debug)]
-pub(crate)  struct SecurityHeaders {
-    pub(crate) cst: Option<String>,
-    pub(crate) x_security_token: Option<String>,
-    pub(crate) ig_account_id: Option<String>,
-    pub(crate) authorization: Option<String>,
-    pub(crate) version: Option<String>,
-    pub(crate) x_ig_api_key: Option<String>,
-}
-
-impl SecurityHeaders {
-    pub(crate) fn new(cst: Option<String>,
-                      x_security_token: Option<String>,
-                      ig_account_id: Option<String>,
-                      authorization: Option<String>,
-                        version: Option<String>,
-                        x_ig_api_key: Option<String>   ) -> Self {
-        Self {
-            cst,
-            x_security_token,
-            ig_account_id,
-            authorization,
-            version,
-            x_ig_api_key,
-        }
-    }
-
-    pub(crate) fn get_v1(&self) -> HashMap<String, String> {
-        let mut headers = HashMap::new();
-        headers.insert("Version".to_string(), "1".to_string());
-        headers.insert("X-IG-API-KEY".to_string(), self.x_ig_api_key.to_string());
-        headers.insert("CST".to_string(), self.cst.to_string());
-        headers.insert("X-SECURITY-TOKEN".to_string(), self.x_security_token.to_string());
-        headers
-    }
-
-    pub(crate) fn get_v2(&self) -> HashMap<String, String> {
-        let mut headers = HashMap::new();
-        headers.insert("Version".to_string(), "2".to_string());
-        headers.insert("X-IG-API-KEY".to_string(), self.x_ig_api_key.to_string());
-        headers.insert("IG-ACCOUNT-ID".to_string(), self.ig_account_id.to_string());
-        headers.insert("Authorization".to_string(), self.authorization.to_string());
-        headers
-    }
-
-    pub(crate) fn get_v3(&self) -> HashMap<String, String> {
-        let mut headers = HashMap::new();
-        headers.insert("Version".to_string(), "3".to_string());
-        headers.insert("X-IG-API-KEY".to_string(), self.x_ig_api_key.to_string());
-        headers.insert("IG-ACCOUNT-ID".to_string(), self.ig_account_id.to_string());
-        headers.insert("Authorization".to_string(), self.authorization.to_string());
-        headers
-    }
-}
-
-impl Default for SecurityHeaders {
-    fn default() -> Self {
-        Self {
-            cst: None,
-            x_security_token: None,
-            ig_account_id: None,
-            authorization: None,
-            version: None,
-            x_ig_api_key: None,
-        }
-    }
-}
+use crate::transport::headers::{SecurityHeaders, Version};
 
 /// Represents the HTTP client for interacting with the IG API.
 #[derive(Debug)]
@@ -109,6 +43,7 @@ impl IGHttpClient {
         Ok(Self {
             client,
             base_url: base_url.to_string(),
+            security_headers: SecurityHeaders::default(),
         })
     }
 
@@ -116,17 +51,18 @@ impl IGHttpClient {
     pub async fn get<T: DeserializeOwned + Debug>(
         &self,
         endpoint: &str,
-        headers: Option<HashMap<String, String>>,
-    ) -> Result<(T, HeaderMap)>  {
+        version: Option<Version>,
+    ) -> Result<T> {
         let url = format!("{}{}", self.base_url, endpoint);
-        debug!("Sending GET request to {} with headers {:?}", url, headers.clone().unwrap());
+        let headers = SecurityHeaders::get_headers_from_version(version);
+        debug!("Sending GET request to {} with headers {:?}", url, headers);
 
         let mut request = self.client.get(&url);
-        if let Some(headers) = headers {
-            for (key, value) in headers {
-                request = request.header(key, value);
-            }
+
+        for (key, value) in headers {
+            request = request.header(key, value);
         }
+
         let response = match request.send().await {
             Ok(response) => response,
             Err(e) => {
@@ -134,6 +70,8 @@ impl IGHttpClient {
                 anyhow::bail!("Failed to send GET request: {:?}", e)
             }
         };
+
+        let response_headers = response.headers().clone();
 
         let status = response.status();
         if status.is_success() {
@@ -150,7 +88,7 @@ impl IGHttpClient {
         &self,
         endpoint: &str,
         body: &B,
-    ) -> Result<(T, HeaderMap)>  {
+    ) -> Result<(T, HeaderMap)> {
         let url = format!("{}{}", self.base_url, endpoint);
         debug!("Sending POST request to {}", url);
 
@@ -179,7 +117,7 @@ impl IGHttpClient {
         endpoint: &str,
         body: &B,
         headers: Option<HashMap<String, String>>,
-    ) -> Result<(T, HeaderMap)>  {
+    ) -> Result<(T, HeaderMap)> {
         let url = format!("{}{}", self.base_url, endpoint);
         debug!("Sending POST request with custom headers to {}", url);
 
@@ -253,7 +191,7 @@ impl IGHttpClient {
 
     /// Sends a DELETE request to the specified endpoint.
     #[instrument(skip(self))]
-    pub async fn delete<T: DeserializeOwned + Debug>(&self, endpoint: &str) -> Result<(T, HeaderMap)>  {
+    pub async fn delete<T: DeserializeOwned + Debug>(&self, endpoint: &str) -> Result<(T, HeaderMap)> {
         let url = format!("{}{}", self.base_url, endpoint);
         debug!("Sending DELETE request to {}", url);
 
