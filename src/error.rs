@@ -67,7 +67,6 @@ impl std::error::Error for AuthError {}
 impl From<reqwest::Error> for AuthError {
     fn from(e: reqwest::Error) -> Self { AuthError::Network(e) }
 }
-
 impl From<Box<dyn std::error::Error + Send + Sync>> for AuthError {
     fn from(e: Box<dyn std::error::Error + Send + Sync>) -> Self {
         match e.downcast::<reqwest::Error>() {
@@ -82,6 +81,17 @@ impl From<Box<dyn std::error::Error + Send + Sync>> for AuthError {
         }
     }
 }
+impl From<AppError> for AuthError {
+    fn from(e: AppError) -> Self {
+        match e {
+            AppError::Network(e) => AuthError::Network(e),
+            AppError::Io(e)      => AuthError::Io(e),
+            AppError::Json(e)    => AuthError::Json(e),
+            AppError::Unexpected(s) => AuthError::Unexpected(s),
+            _ => AuthError::Other("unknown error".to_string()),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum AppError {
@@ -90,16 +100,22 @@ pub enum AppError {
     Json(serde_json::Error),
     Unexpected(StatusCode),
     Db(sqlx::Error),
+    Unauthorized,
+    NotFound,
+    RateLimitExceeded,
 }
 
 impl Display for AppError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             AppError::Network(e)   => write!(f, "network error: {e}"),
             AppError::Io(e)        => write!(f, "io error: {e}"),
             AppError::Json(e)      => write!(f, "json error: {e}"),
             AppError::Unexpected(s)=> write!(f, "unexpected http status: {s}"),
             AppError::Db(e)        => write!(f, "db error: {e}"),
+            AppError::Unauthorized  => write!(f, "unauthorized"),
+            AppError::NotFound      => write!(f, "not found"),
+            AppError::RateLimitExceeded => write!(f, "rate limit exceeded"),
         }
     }
 }
@@ -118,5 +134,17 @@ impl From<serde_json::Error> for AppError {
 impl From<sqlx::Error> for AppError {
     fn from(e: sqlx::Error) -> Self {
         AppError::Db(e)
+    }
+}
+impl From<AuthError> for AppError {
+    fn from(e: AuthError) -> Self {
+        match e {
+            AuthError::Network(e) => AppError::Network(e),
+            AuthError::Io(e)      => AppError::Io(e),
+            AuthError::Json(e)    => AppError::Json(e),
+            AuthError::BadCredentials => AppError::Unauthorized,
+            AuthError::Unexpected(s) => AppError::Unexpected(s),
+            _ => AppError::Unexpected(StatusCode::INTERNAL_SERVER_ERROR),
+        }
     }
 }

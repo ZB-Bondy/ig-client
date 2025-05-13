@@ -1,10 +1,6 @@
-use chrono::{Duration, Utc};
-use ig_client::application::services::ig_tx_client::{IgTxClient, IgTxFetcher};
 use ig_client::config::Config;
-use ig_client::session::auth::IgAuth;
-use ig_client::session::interface::IgAuthenticator;
-use ig_client::storage::utils::store_transactions;
 use ig_client::utils::logger::setup_logger;
+use ig_client::utils::transactions::fetch_and_store_transactions;
 use std::time::Duration as StdDuration;
 use tokio::signal;
 use tokio::time;
@@ -14,6 +10,8 @@ use tracing::{debug, error, info, warn};
 const MAX_CONSECUTIVE_ERRORS: u32 = 3;
 // Cooldown time in seconds when hitting max errors
 const ERROR_COOLDOWN_SECONDS: u64 = 300; // 5 minutes
+
+const SLEEP_TIME: u64 = 24; // Sleep time in hours
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctrl_c = signal::ctrl_c();
     tokio::pin!(ctrl_c);
 
-    let hour_interval = time::interval(StdDuration::from_secs(3600)); // 1 hour in seconds
+    let hour_interval = time::interval(StdDuration::from_secs(SLEEP_TIME * 3600));
     tokio::pin!(hour_interval);
 
     info!("Service started, will fetch transactions hourly");
@@ -48,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // If this is the first run, the interval will tick immediately
                 info!("Starting scheduled transaction fetch");
 
-                match fetch_and_store_transactions(&cfg, &pool).await {
+                match fetch_and_store_transactions(&cfg, &pool, None).await {
                     Ok(inserted) => {
                         info!("Successfully processed {} transactions", inserted);
                         consecutive_errors = 0; // Reset error counter on success
@@ -73,33 +71,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Service shutting down");
     Ok(())
-}
-
-// Extract the core functionality to a separate function for better error handling
-async fn fetch_and_store_transactions(
-    cfg: &Config,
-    pool: &sqlx::PgPool,
-) -> Result<usize, Box<dyn std::error::Error>> {
-    // Authenticate with IG
-    let auth = IgAuth::new(cfg);
-    let sess = auth.login().await?;
-    info!("Successfully authenticated with IG");
-
-    // Create the transaction client
-    let tx_client = IgTxClient::new(cfg);
-
-    // Get today's date and the date 24 hours ago
-    let to = Utc::now();
-    let from = to - Duration::days(10); 
-    // let from = Utc.with_ymd_and_hms(2024, 5, 1, 0, 0, 0).unwrap();
-
-    debug!("Fetching transactions from {} to {}", from, to);
-    let txs = tx_client.fetch_range(&sess, from, to).await?;
-    info!("Fetched {} transactions", txs.len());
-
-    // Store the transactions
-    let inserted = store_transactions(pool, &txs).await?;
-    info!("Inserted {} rows", inserted);
-
-    Ok(inserted)
 }

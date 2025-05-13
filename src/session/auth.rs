@@ -7,7 +7,7 @@ use crate::{
     config::Config,                      // <─ tu struct de antes
     error::AuthError,                    // mismo enum/impl que ya usas
     session::interface::{IgAuthenticator, IgSession},
-    session::session::SessionResp,
+    session::response::SessionResp,
 };
 
 /// Mantiene una referencia a la Config global
@@ -34,7 +34,7 @@ impl<'a> IgAuth<'a> {
 }
 
 #[async_trait]
-impl<'a> IgAuthenticator for IgAuth<'a> {
+impl IgAuthenticator for IgAuth<'_> {
     async fn login(&self) -> Result<IgSession, AuthError> {
         let url  = self.rest_url("session");
         let body = serde_json::json!({

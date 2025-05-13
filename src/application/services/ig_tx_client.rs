@@ -91,7 +91,7 @@ impl<'a> IgTxClient<'a> {
 }
 
 #[async_trait]
-impl<'a> IgTxFetcher for IgTxClient<'a> {
+impl IgTxFetcher for IgTxClient<'_> {
     async fn fetch_range(
         &self,
         sess: &IgSession,
