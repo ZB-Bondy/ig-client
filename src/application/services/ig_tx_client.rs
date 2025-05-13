@@ -1,6 +1,6 @@
 use std::str::FromStr;
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use reqwest::{Client, StatusCode};
 use regex::Regex;
 use tracing::debug;
@@ -59,11 +59,10 @@ impl<'a> IgTxClient<'a> {
         } else {
             (None, None, None)
         };
-
-        let deal_date = match chrono::NaiveDateTime::parse_from_str(&raw.date_utc, "%Y-%m-%dT%H:%M:%S") {
-            Ok(naive) => Ok(naive.and_utc()),
-            Err(e) => Err(e.into()), 
-        };
+        
+        let deal_date = NaiveDateTime::parse_from_str(&raw.date_utc, "%Y-%m-%dT%H:%M:%S")
+            .map(|naive| naive.and_utc())
+            .unwrap_or_else(|_| Utc::now());
 
         let pnl_eur = raw.pnl_raw.trim_start_matches('E')
             .parse::<f64>()

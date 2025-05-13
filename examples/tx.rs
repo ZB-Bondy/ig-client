@@ -1,5 +1,5 @@
 use chrono::{TimeZone, Utc};
-use tracing::info;
+use tracing::{debug, info};
 use ig_client::application::services::ig_tx_client::{IgTxClient, IgTxFetcher};
 use ig_client::config::Config;
 use ig_client::session::auth::IgAuth;
@@ -11,7 +11,7 @@ use ig_client::utils::logger::setup_logger;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_logger();
     let cfg  = Config::new();
-    info!("Loaded config: database={}", cfg.database);
+    debug!("Loaded config: database={}", cfg.database);
 
     // build the Postgres pool
     let pool = cfg.pg_pool().await?;
