@@ -45,7 +45,7 @@ reqwest = { version = "0.12.15", features = ["json"] }
 criterion = "0.5.1"
 sqlx = { version = "0.8.5", features = [ "postgres","macros","chrono","runtime-tokio-native-tls"]}
 async-trait = "0.1.88"
-regex = "1.10.6"
+regex = "1.11.1"
 
 
 [dev-dependencies]
