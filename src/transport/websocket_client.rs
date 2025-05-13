@@ -4,7 +4,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc::{self, Receiver, Sender};
-use tokio_tungstenite::connect_async;
+// Importamos tokio_tungstenite pero usamos tokio_tungstenite::connect_async directamente
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
 use crate::config::Config;
@@ -36,32 +36,70 @@ pub struct IgWebSocketClientImpl {
 impl IgWebSocketClientImpl {
 
     async fn connect_direct(&self, session: &IgSession) -> Result<(), AppError> {
-        info!("Using direct connection approach to Lightstreamer");
+        info!("Using Streaming Companion approach for Lightstreamer connection");
         
-        // Basado en el Streaming Companion, intentamos conectar directamente a estos endpoints
-        let lightstreamer_endpoints = [
-            "wss://apd148f.marketdatasystems.com/lightstreamer",
+        // Basado en lo que hace el Streaming Companion, conectamos directamente al WebSocket
+        // con encabezados específicos
+        
+        // Definir los endpoints de Lightstreamer para intentar conectar
+        // Estos son los mismos endpoints que usa el Streaming Companion
+        let lightstreamer_endpoints = vec![
             "wss://apd.marketdatasystems.com/lightstreamer",
+            "wss://apd145f.marketdatasystems.com/lightstreamer",
             "wss://push.lightstreamer.com/lightstreamer"
         ];
         
         let mut ws_stream = None;
-        let mut successful_endpoint = String::new();
+        // Usamos un prefijo _ para indicar que esta variable podría no ser utilizada
+        let mut _successful_endpoint = String::new();
         
-        // Probar cada endpoint hasta encontrar uno que funcione
+        // Intentar conectar a cada endpoint
         for endpoint in lightstreamer_endpoints {
             info!("Trying to connect to Lightstreamer endpoint: {}", endpoint);
             
+            // Asegurarnos de que estamos usando el esquema WebSocket correcto
+            let ws_endpoint = if endpoint.starts_with("https://") {
+                endpoint.replace("https://", "wss://")
+            } else if endpoint.starts_with("http://") {
+                endpoint.replace("http://", "ws://")
+            } else if !endpoint.starts_with("wss://") && !endpoint.starts_with("ws://") {
+                format!("wss://{}", endpoint)
+            } else {
+                endpoint.to_string()
+            };
+            
+            info!("Using WebSocket URL: {}", ws_endpoint);
+            
+            // Vamos a dejar que tokio-tungstenite maneje los encabezados WebSocket básicos
+            // y solo añadiremos los encabezados personalizados
+            let mut request = tokio_tungstenite::tungstenite::http::Request::builder()
+                .uri(ws_endpoint)
+                .header("Sec-WebSocket-Protocol", "js.lightstreamer.com")
+                .header("Origin", "https://labs.ig.com")
+                .header("Cache-Control", "no-cache")
+                .header("Pragma", "no-cache")
+                .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36")
+                .header("Accept-Language", "es-ES,es;q=0.9,en;q=0.8")
+                .body(())
+                .map_err(|e| {
+                    error!("Error creating WebSocket request: {}", e);
+                    AppError::WebSocketError(format!("Failed to create WebSocket request: {}", e))
+                })?;
+                
+            // Añadir encabezados de autenticación
+            let headers = request.headers_mut();
+            headers.insert("CST", tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&session.cst).unwrap());
+            headers.insert("X-SECURITY-TOKEN", tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&session.token).unwrap());
+            
             // Conectar al servidor WebSocket
-            match connect_async(endpoint).await {
+            match tokio_tungstenite::connect_async(request).await {
                 Ok((stream, response)) => {
                     info!("Successfully connected to: {}", endpoint);
                     info!("HTTP Response: {} {}", response.status(), response.status().canonical_reason().unwrap_or(""));
                     debug!("Response headers: {:#?}", response.headers());
                     
                     ws_stream = Some(stream);
-                    successful_endpoint = endpoint.to_string();
-                    info!(sugg = "{}", successful_endpoint);
+                    _successful_endpoint = endpoint.to_string();
                     break;
                 },
                 Err(e) => {
@@ -93,21 +131,23 @@ impl IgWebSocketClientImpl {
         
         // Establecer conjunto de adaptadores basado en el entorno
         let adapter_set = if self.config.rest_api.base_url.contains("demo") {
-            "DEMO"
+            "DEMO-igindexdemo"
         } else {
-            "PROD"
+            "PROD-igindexlive"
         };
         
-        // Para la contraseña, usamos los tokens CST y XST
-        let password = format!("CST-{}|XST-{}", session.cst, session.token);
+        info!("Using adapter set: {}", adapter_set);
+        info!("Using client ID: {}", client_id);
         
         // Enviar un mensaje de creación de sesión
+        // Formato exacto del mensaje que envía el Streaming Companion
         let create_session_msg = format!(
-            "\r\n\r\nLS_adapter_set={}\r\nLS_cid={}\r\nLS_send_sync=false\r\nLS_cause=api\r\nLS_user={}\r\nLS_password={}\r\n",
+            "\r\n\r\nLS_adapter_set={}\r\nLS_cid={}\r\nLS_send_sync=false\r\nLS_cause=api\r\nLS_user={}\r\nLS_password=CST-{}|XST-{}\r\n",
             adapter_set,
             client_id,
             session.account_id,
-            password
+            session.cst,
+            session.token
         );
         
         info!("Sending session creation message...");
@@ -357,99 +397,96 @@ impl IgWebSocketClient for IgWebSocketClientImpl {
         info!("Connecting to Lightstreamer server...");
         
         // Primero, obtener los detalles de conexión a Lightstreamer desde la API de IG
-        info!("Requesting Lightstreamer connection details from IG API...");
-        
-        // Construir el cliente HTTP para hacer la solicitud a la API
-        let client = reqwest::Client::new();
-        
-        // Probar diferentes rutas para el endpoint de Lightstreamer
         let base_url = &self.config.rest_api.base_url;
+        let session_url = format!("{}/session", base_url);
         
-        // Posibles rutas para el endpoint de Lightstreamer
-        let possible_paths = [
-            "session/lightstreamer",
-            "lightstreamer",
-            "lightstreamer/session",
-            "session"
-        ];
+        info!("Getting session info from: {}", session_url);
         
-        let mut response = None;
-        let mut successful_url = String::new();
+        // Hacer la solicitud a la API con la API key que usa el Streaming Companion
+        let client = reqwest::Client::new();
+        let response = client.get(&session_url)
+            .header("X-SECURITY-TOKEN", &session.token)
+            .header("CST", &session.cst)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .header("X-IG-API-KEY", "623762bb9bf6e5b3e0675f825ed31413c6a93672")
+            .header("Origin", "https://labs.ig.com")
+            .header("Referer", "https://labs.ig.com/")
+            .send()
+            .await
+            .map_err(|e| {
+                error!("Error requesting session info: {}", e);
+                AppError::WebSocketError(format!("Failed to request session info: {}", e))
+            })?;
         
-        // Probar cada ruta hasta encontrar una que funcione
-        for path in possible_paths {
-            let url = format!("{}/{}", base_url, path);
-            info!("Trying Lightstreamer details URL: {}", url);
-            
-            // Hacer la solicitud a la API
-            match client.get(&url)
-                .header("X-SECURITY-TOKEN", &session.token)
-                .header("CST", &session.cst)
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
-                .send()
-                .await {
-                    Ok(resp) => {
-                        info!("Response status: {}", resp.status());
-                        if resp.status().is_success() {
-                            response = Some(resp);
-                            successful_url = url;
-                            break;
-                        } else {
-                            let status = resp.status();
-                            let text = resp.text().await.unwrap_or_else(|_| "No response body".to_string());
-                            warn!("Error response from path {}: {} - {}", path, status, text);
-                        }
-                    },
-                    Err(e) => {
-                        warn!("Error requesting from path {}: {}", path, e);
-                    }
-            }
-        }
-        
-        // Si no encontramos una ruta que funcione, intentar con el enfoque directo
-        if response.is_none() {
-            warn!("Could not find a working Lightstreamer API endpoint, falling back to direct connection");
+        // Verificar el código de estado
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_else(|_| "No response body".to_string());
+            error!("Error response from session API: {} - {}", status, text);
+            warn!("Falling back to direct connection approach");
             return self.connect_direct(session).await;
         }
         
-        // Usar la respuesta que obtuvimos en el bucle anterior
-        let response = response.unwrap();
-        
-        info!("Successfully connected to endpoint: {}", successful_url);
-        
         // Parsear la respuesta JSON
-        let ls_info: serde_json::Value = response.json().await.map_err(|e| {
-            error!("Error parsing Lightstreamer details: {}", e);
-            AppError::WebSocketError(format!("Failed to parse Lightstreamer details: {}", e))
+        let session_info: serde_json::Value = response.json().await.map_err(|e| {
+            error!("Error parsing session info: {}", e);
+            AppError::WebSocketError(format!("Failed to parse session info: {}", e))
         })?;
         
-        // Extraer los detalles de conexión
-        let lightstreamer_endpoint = ls_info["lightstreamerEndpoint"].as_str().ok_or_else(|| {
-            error!("Lightstreamer endpoint not found in response");
-            AppError::WebSocketError("Lightstreamer endpoint not found in response".to_string())
-        })?;
+        // Extraer el endpoint de Lightstreamer
+        let lightstreamer_endpoint = match session_info["lightstreamerEndpoint"].as_str() {
+            Some(endpoint) => {
+                info!("Found Lightstreamer endpoint in session response: {}", endpoint);
+                endpoint.to_string()
+            },
+            None => {
+                warn!("Lightstreamer endpoint not found in session response, falling back to direct connection");
+                return self.connect_direct(session).await;
+            }
+        };
         
-        let client_id = ls_info["clientId"].as_str().ok_or_else(|| {
-            error!("Client ID not found in response");
-            AppError::WebSocketError("Client ID not found in response".to_string())
-        })?;
+        // Extraer el client_id
+        let client_id = match session_info["clientId"].as_str() {
+            Some(id) => {
+                info!("Found client ID in session response: {}", id);
+                id.to_string()
+            },
+            None => {
+                // Si no hay client_id, generamos uno aleatorio
+                let id = format!("IGCLIENT_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
+                info!("Client ID not found in session response, using generated ID: {}", id);
+                id
+            }
+        };
         
-        let adapter_set = ls_info["adapterSet"].as_str().ok_or_else(|| {
-            error!("Adapter set not found in response");
-            AppError::WebSocketError("Adapter set not found in response".to_string())
-        })?;
+        // Construir la URL completa para conectar al WebSocket
+        // Convertir el esquema https:// a wss://
+        let ws_url = if lightstreamer_endpoint.starts_with("https://") {
+            format!("wss://{}/lightstreamer", lightstreamer_endpoint.trim_start_matches("https://"))
+        } else {
+            format!("wss://{}/lightstreamer", lightstreamer_endpoint.trim_start_matches("http://"))
+        };
+        info!("Connecting to Lightstreamer WebSocket at: {}", ws_url);
         
-        let password = ls_info["password"].as_str().ok_or_else(|| {
-            error!("Password not found in response");
-            AppError::WebSocketError("Password not found in response".to_string())
-        })?;
+        // Vamos a dejar que tokio-tungstenite maneje los encabezados WebSocket básicos
+        // y solo añadiremos los encabezados personalizados
+        let request = tokio_tungstenite::tungstenite::http::Request::builder()
+            .uri(&ws_url)
+            .header("Sec-WebSocket-Protocol", "js.lightstreamer.com")
+            .header("Origin", "https://labs.ig.com")
+            .header("Cache-Control", "no-cache")
+            .header("Pragma", "no-cache")
+            .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36")
+            .header("Accept-Language", "es-ES,es;q=0.9,en;q=0.8")
+            .body(())
+            .map_err(|e| {
+                error!("Error creating WebSocket request: {}", e);
+                AppError::WebSocketError(format!("Failed to create WebSocket request: {}", e))
+            })?;
         
-        info!("Successfully obtained Lightstreamer connection details");
-        info!("Connecting to Lightstreamer endpoint: {}", lightstreamer_endpoint);
-        
-        // Conectar al servidor WebSocket usando los detalles obtenidos
-        let ws_stream = match connect_async(lightstreamer_endpoint).await {
+        // Conectar al servidor WebSocket
+        let ws_stream = match tokio_tungstenite::connect_async(request).await {
             Ok((stream, response)) => {
                 info!("Successfully connected to: {}", lightstreamer_endpoint);
                 info!("HTTP Response: {} {}", response.status(), response.status().canonical_reason().unwrap_or(""));
@@ -472,16 +509,24 @@ impl IgWebSocketClient for IgWebSocketClientImpl {
         // Split the WebSocket stream
         let (mut ws_tx, mut ws_rx) = ws_stream.split();
         
-        // Usar los detalles obtenidos de la API de IG
-        // client_id, adapter_set y password ya fueron obtenidos de la respuesta de la API
+        // Establecer conjunto de adaptadores basado en el entorno
+        let adapter_set = if self.config.rest_api.base_url.contains("demo") {
+            "DEMO-igindexdemo"
+        } else {
+            "PROD-igindexlive"
+        };
         
-        // Send a create session message
+        info!("Using adapter set: {}", adapter_set);
+        
+        // Send a create session message using the credentials from the API response
+        // Formato exacto del mensaje que envía el Streaming Companion
         let create_session_msg = format!(
-            "\r\n\r\nLS_adapter_set={}\r\nLS_cid={}\r\nLS_send_sync=false\r\nLS_cause=api\r\nLS_user={}\r\nLS_password={}\r\n",
+            "\r\n\r\nLS_adapter_set={}\r\nLS_cid={}\r\nLS_send_sync=false\r\nLS_cause=api\r\nLS_user={}\r\nLS_password=CST-{}|XST-{}\r\n",
             adapter_set,
             client_id,
             session.account_id,
-            password
+            session.cst,
+            session.token
         );
         
         info!("Sending session creation message...");
