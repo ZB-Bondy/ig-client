@@ -1,70 +1,35 @@
-/******************************************************************************
-   Author: Joaquín Béjar García
-   Email: jb@taunais.com
-   Date: 4/9/24
-******************************************************************************/
+//! examples/login_example.rs
+//! cargo run --example login_example
 
-use anyhow::Result;
-use ig_client::config::Config;
-use ig_client::session::session::Session;
-use ig_client::utils::logger::setup_logger;
-use tracing::{error, info};
-
+use ig_client::{
+    config::Config,
+};
+use tracing::{info, error};
+use tracing_subscriber::FmtSubscriber;
+use ig_client::session::auth::IgAuth;
+use ig_client::session::interface::IgAuthenticator;
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    setup_logger();
+async fn main() {
+    // Simple console logger
+    let sub = FmtSubscriber::builder().with_max_level(tracing::Level::INFO).finish();
+    tracing::subscriber::set_global_default(sub).expect("setting default subscriber failed");
 
-    let config = Config::new();
+    // 1. Load config from env (see Config::new)
+    let cfg = Config::new();
+    info!("Loaded config → {}", cfg.rest_api.base_url);
+    // 2. Instantiate authenticator
+    let auth = IgAuth::new(&cfg);
 
-    let mut session = Session::new(config)?;
-
-    match session.authenticate(2).await {
-        Ok(()) => {
-            info!("REST API authentication successful");
+    // 3. Try login
+    match auth.login().await {
+        Ok(sess) => {
+            info!("✅ Auth ok. Account: {}", sess.account_id);
+            println!("CST  = {}", sess.cst);
+            println!("X-ST = {}", sess.token);
         }
         Err(e) => {
-            error!("REST API authentication error: {:?}", e);
+            error!("Auth failed: {e:?}");
         }
     }
-
-
-    match session.get_session_details(false).await {
-        Ok(ar) => {
-            info!("Account details: {:?}", ar);
-        }
-        Err(e) => {
-            error!("REST API get_session_details error: {:?}", e);
-        }
-    }
-
-    match session.switch_account("ZR24W", Some(false)).await {
-        Ok(ar) => {
-            info!("Account details: {:?}", ar);
-        }
-        Err(e) => {
-            error!("REST API switch_account error: {:?}", e);
-        }
-    }
-
-    // match session.authenticate(2).await {
-    //     Ok(()) => {
-    //         info!("REST API authentication successful");
-    //     }
-    //     Err(e) => {
-    //         error!("REST API authentication error: {:?}", e);
-    //     }
-    // }
-
-    match session.get_session_details(false).await {
-        Ok(ar) => {
-            info!("Account details: {:?}", ar);
-        }
-        Err(e) => {
-            error!("REST API get_session_details error: {:?}", e);
-        }
-    }
-
-    info!("Session finish successful");
-    Ok(())
 }

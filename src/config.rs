@@ -3,7 +3,9 @@ use std::env;
 use std::fmt;
 use std::fmt::Debug;
 use std::str::FromStr;
+use sqlx::postgres::PgPoolOptions;
 use tracing::error;
+use crate::storage::config::DatabaseConfig;
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize, Clone)]
@@ -21,6 +23,7 @@ pub struct Config {
     pub credentials: Credentials,
     pub rest_api: RestApiConfig,
     pub websocket: WebSocketConfig,
+    pub database: DatabaseConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -48,8 +51,8 @@ impl fmt::Display for Config {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{{\"credentials\":{},\"rest_api\":{},\"websocket\":{}}}",
-            self.credentials, self.rest_api, self.websocket
+            "{{\"credentials\":{},\"rest_api\":{},\"websocket\":{},\"database\":{}}}",
+            self.credentials, self.rest_api, self.websocket, self.database
         )
     }
 }
@@ -118,7 +121,21 @@ impl Config {
                 ),
                 reconnect_interval: get_env_or_default("IG_WS_RECONNECT_INTERVAL", 5),
             },
+            database: DatabaseConfig {
+                url: get_env_or_default(
+                    "DATABASE_URL",
+                    String::from("postgres://postgres:postgres@localhost/ig"),
+                ),
+                max_connections: get_env_or_default("DB_MAX_CONNECTIONS", 5u32),
+            },
         }
+    }
+
+    pub async fn pg_pool(&self) -> Result<sqlx::Pool<sqlx::Postgres>, sqlx::Error> {
+        PgPoolOptions::new()
+            .max_connections(self.database.max_connections)
+            .connect(&self.database.url)
+            .await
     }
 }
 
@@ -139,15 +156,17 @@ mod tests_config {
 
         for (key, value) in vars {
             old_vars.push((key, env::var(key).ok()));
-            env::set_var(key, value);
+            unsafe {
+                env::set_var(key, value);
+            }
         }
 
         test();
 
         for (key, value) in old_vars {
             match value {
-                Some(v) => env::set_var(key, v),
-                None => env::remove_var(key),
+                Some(v) => unsafe {env::set_var(key, v)},
+                None => unsafe {env::remove_var(key)},
             }
         }
     }
@@ -287,6 +306,10 @@ mod tests_display {
                 url: "wss://ws.example.com".to_string(),
                 reconnect_interval: 5,
             },
+            database: DatabaseConfig {
+                url: "postgres://user:pass@localhost/ig_db".to_string(),
+                max_connections: 5,
+            },
         };
 
         let display_output = config.to_string();
@@ -306,6 +329,10 @@ mod tests_display {
             "websocket": {
                 "url": "wss://ws.example.com",
                 "reconnect_interval": 5
+            },
+            "database": {
+                "url": "postgres://user:pass@localhost/ig_db",
+                "max_connections": 5
             }
         });
 
