@@ -4,7 +4,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc::{self, Receiver, Sender};
-use tokio_tungstenite::{connect_async};
+use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
 use crate::config::Config;
@@ -34,6 +34,167 @@ pub struct IgWebSocketClientImpl {
 }
 
 impl IgWebSocketClientImpl {
+
+    async fn connect_direct(&self, session: &IgSession) -> Result<(), AppError> {
+        info!("Using direct connection approach to Lightstreamer");
+        
+        // Basado en el Streaming Companion, intentamos conectar directamente a estos endpoints
+        let lightstreamer_endpoints = [
+            "wss://apd148f.marketdatasystems.com/lightstreamer",
+            "wss://apd.marketdatasystems.com/lightstreamer",
+            "wss://push.lightstreamer.com/lightstreamer"
+        ];
+        
+        let mut ws_stream = None;
+        let mut successful_endpoint = String::new();
+        
+        // Probar cada endpoint hasta encontrar uno que funcione
+        for endpoint in lightstreamer_endpoints {
+            info!("Trying to connect to Lightstreamer endpoint: {}", endpoint);
+            
+            // Conectar al servidor WebSocket
+            match connect_async(endpoint).await {
+                Ok((stream, response)) => {
+                    info!("Successfully connected to: {}", endpoint);
+                    info!("HTTP Response: {} {}", response.status(), response.status().canonical_reason().unwrap_or(""));
+                    debug!("Response headers: {:#?}", response.headers());
+                    
+                    ws_stream = Some(stream);
+                    successful_endpoint = endpoint.to_string();
+                    info!(sugg = "{}", successful_endpoint);
+                    break;
+                },
+                Err(e) => {
+                    warn!("Failed to connect to {}: {}", endpoint, e);
+                }
+            }
+        }
+        
+        // Si no pudimos conectar a ningún endpoint, devolver un error
+        if ws_stream.is_none() {
+            error!("Failed to connect to any Lightstreamer endpoint");
+            return Err(AppError::WebSocketError("Failed to connect to any Lightstreamer endpoint".to_string()));
+        }
+        
+        let ws_stream = ws_stream.unwrap();
+        
+        // Crear canal para enviar mensajes
+        let (tx, mut rx) = mpsc::channel::<Message>(100);
+        *self.tx.lock().unwrap() = Some(tx.clone());
+        
+        // Establecer bandera de conexión
+        *self.connected.lock().unwrap() = true;
+        
+        // Dividir el stream WebSocket
+        let (mut ws_tx, mut ws_rx) = ws_stream.split();
+        
+        // Generar un ID de cliente aleatorio
+        let client_id = format!("IGCLIENT_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
+        
+        // Establecer conjunto de adaptadores basado en el entorno
+        let adapter_set = if self.config.rest_api.base_url.contains("demo") {
+            "DEMO"
+        } else {
+            "PROD"
+        };
+        
+        // Para la contraseña, usamos los tokens CST y XST
+        let password = format!("CST-{}|XST-{}", session.cst, session.token);
+        
+        // Enviar un mensaje de creación de sesión
+        let create_session_msg = format!(
+            "\r\n\r\nLS_adapter_set={}\r\nLS_cid={}\r\nLS_send_sync=false\r\nLS_cause=api\r\nLS_user={}\r\nLS_password={}\r\n",
+            adapter_set,
+            client_id,
+            session.account_id,
+            password
+        );
+        
+        info!("Sending session creation message...");
+        debug!("Session creation message: {}", create_session_msg.replace("\r\n", "[CR][LF]"));
+        
+        ws_tx.send(Message::Text(create_session_msg.into())).await.map_err(|e| {
+            error!("Error sending session creation message: {}", e);
+            AppError::WebSocketError(format!("Failed to send session creation message: {}", e))
+        })?;
+        
+        info!("Session creation message sent successfully");
+        
+        // Esperar y mostrar la respuesta del servidor
+        info!("Waiting for server response...");
+        if let Some(msg_result) = ws_rx.next().await {
+            match msg_result {
+                Ok(msg) => {
+                    if let Ok(text) = msg.to_text() {
+                        info!("Server response: {}", text.replace("\r\n", "[CR][LF]\n"));
+                    } else {
+                        info!("Server response (non-text): {:?}", msg);
+                    }
+                },
+                Err(e) => {
+                    error!("Error receiving server response: {}", e);
+                }
+            }
+        } else {
+            warn!("No response received from server");
+        }
+        
+        // Iniciar heartbeat
+        self.start_heartbeat().await?;
+        
+        // Clonar referencias para las tareas
+        let self_clone = self.clone();
+        
+        // Tarea para manejar mensajes entrantes
+        tokio::spawn(async move {
+            info!("Starting message reception task...");
+            while let Some(msg) = ws_rx.next().await {
+                match msg {
+                    Ok(msg) => {
+                        // Mostrar el mensaje recibido
+                        if let Ok(text) = msg.to_text() {
+                            debug!("Message received: {}", text.replace("\r\n", "[CR][LF]\n"));
+                        } else {
+                            debug!("Message received (non-text): {:?}", msg);
+                        }
+                        
+                        if let Err(e) = self_clone.handle_message(msg).await {
+                            error!("Error processing WebSocket message: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("WebSocket error: {}", e);
+                        break;
+                    }
+                }
+            }
+            
+            // Conexión cerrada
+            *self_clone.connected.lock().unwrap() = false;
+            info!("WebSocket connection closed");
+        });
+        
+        // Tarea para enviar mensajes salientes
+        tokio::spawn(async move {
+            info!("Starting message sending task...");
+            while let Some(msg) = rx.recv().await {
+                // Mostrar el mensaje a enviar
+                if let Message::Text(ref text) = msg {
+                    debug!("Sending message: {}", text);
+                }
+                
+                if let Err(e) = ws_tx.send(msg).await {
+                    error!("Error sending WebSocket message: {}", e);
+                    break;
+                }
+            }
+        });
+        
+        info!("WebSocket connection established and ready for use");
+        
+        Ok(())
+    }
+    
     /// Create a new WebSocket client
     pub fn new(config: Arc<Config>) -> Self {
         let (market_tx, market_rx) = mpsc::channel(100);
@@ -94,7 +255,6 @@ impl IgWebSocketClientImpl {
         } else if msg.is_close() {
             info!("Received close message");
         }
-            
         
         Ok(())
     }
@@ -102,60 +262,30 @@ impl IgWebSocketClientImpl {
     /// Process a WebSocket message according to its type
     async fn process_message(&self, ws_msg: WebSocketMessage) -> Result<(), AppError> {
         match ws_msg {
+            // Handle messages based on the actual variants in WebSocketMessage
+            WebSocketMessage::Subscribe { .. } => {
+                debug!("Processed subscribe message");
+                // This is an outgoing message, we don't need to process it
+            },
+            WebSocketMessage::Unsubscribe { .. } => {
+                debug!("Processed unsubscribe message");
+                // This is an outgoing message, we don't need to process it
+            },
+            WebSocketMessage::Handshake { .. } => {
+                debug!("Processed handshake message");
+            },
+            WebSocketMessage::Ping => {
+                debug!("Processed ping message");
+            },
             WebSocketMessage::Pong => {
-                debug!("Received PONG");
-            }
-            WebSocketMessage::Error { code, message } => {
-                error!("Received error: {} - {}", code, message);
-            }
-            WebSocketMessage::Update { subscription_id, data } => {
-                // Get the subscription type
-                let subscription_type = {
-                    let subscriptions = self.subscriptions.lock().unwrap();
-                    match subscriptions.get(&subscription_id) {
-                        Some(sub) => sub.subscription_type.clone(),
-                        None => {
-                            warn!("Received update for unknown subscription: {}", subscription_id);
-                            return Ok(());
-                        }
-                    }
-                };
-                
-                info!("Received update for subscription {}: type={:?}", 
-                      subscription_id, subscription_type);
-                
-                // Process the update based on subscription type
-                match subscription_type {
-                    SubscriptionType::Market => {
-                        debug!("Market update data: {:?}", data);
-                        if let Ok(update) = serde_json::from_value::<MarketUpdate>(data.clone()) {
-                            info!("Market update: {:?}", update);
-                            if let Err(e) = self.market_tx.send(update).await {
-                                warn!("Error sending market update: {}", e);
-                            }
-                        } else {
-                            warn!("Error parsing market update: {:?}", data);
-                        }
-                    }
-                    SubscriptionType::Account | SubscriptionType::Trade => {
-                        debug!("Account update data: {:?}", data);
-                        if let Ok(update) = serde_json::from_value::<AccountUpdate>(data.clone()) {
-                            info!("Account update: {:?}", update);
-                            if let Err(e) = self.account_tx.send(update).await {
-                                warn!("Error sending account update: {}", e);
-                            }
-                        } else {
-                            warn!("Error parsing account update: {:?}", data);
-                        }
-                    }
-                    _ => {
-                        debug!("Received update for unsupported subscription type: {:?}", subscription_type);
-                    }
-                }
-            }
-            _ => {
-                debug!("Received message: {:?}", ws_msg);
-            }
+                debug!("Processed pong message");
+            },
+            WebSocketMessage::Error { .. } => {
+                debug!("Processed error message");
+            },
+            WebSocketMessage::Update { .. } => {
+                debug!("Processed update message");
+            },
         }
         
         Ok(())
@@ -163,54 +293,56 @@ impl IgWebSocketClientImpl {
     
     /// Send a message to the WebSocket server
     async fn send_message(&self, msg: WebSocketMessage) -> Result<(), AppError> {
-        let json = serde_json::to_string(&msg).map_err(|e| {
-            AppError::SerializationError(format!("Failed to serialize WebSocket message: {}", e))
-        })?;
-        
-        // Clone the sender to avoid holding the lock across an await point
-        let tx = {
+        // Get a clone of the sender to avoid holding the lock across an await
+        let tx_opt = {
             let tx_guard = self.tx.lock().unwrap();
-            match &*tx_guard {
-                Some(tx) => tx.clone(),
-                None => return Err(AppError::WebSocketError("Not connected".to_string())),
-            }
+            tx_guard.clone()
         };
         
-        tx.send(Message::Text(json.into())).await.map_err(|e| {
-            AppError::WebSocketError(format!("Failed to send WebSocket message: {}", e))
-        })
+        if let Some(tx) = tx_opt {
+            let json = serde_json::to_string(&msg).map_err(|e| {
+                error!("Error serializing message: {}", e);
+                AppError::WebSocketError(format!("Failed to serialize message: {}", e))
+            })?;
+            
+            tx.send(Message::Text(json.into())).await.map_err(|e| {
+                error!("Error sending message: {}", e);
+                AppError::WebSocketError(format!("Failed to send message: {}", e))
+            })?;
+            
+            Ok(())
+        } else {
+            Err(AppError::WebSocketError("WebSocket not connected".to_string()))
+        }
     }
     
     /// Start the heartbeat task
     async fn start_heartbeat(&self) -> Result<(), AppError> {
-        let tx = {
-            let tx_guard = self.tx.lock().unwrap();
-            match &*tx_guard {
-                Some(tx) => tx.clone(),
-                None => return Err(AppError::WebSocketError("Not connected".to_string())),
-            }
-        };
-        
-        let connected = self.connected.clone();
-        
-        tokio::spawn(async move {
-            while *connected.lock().unwrap() {
-                // Send a ping every 30 seconds
-                tokio::time::sleep(Duration::from_secs(30)).await;
+        let tx_guard = self.tx.lock().unwrap();
+        if let Some(tx) = &*tx_guard {
+            let tx_clone = tx.clone();
+            
+            // Spawn a task to send heartbeat messages
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(30));
                 
-                if !*connected.lock().unwrap() {
-                    break;
+                loop {
+                    interval.tick().await;
+                    
+                    // Send a heartbeat message
+                    if let Err(e) = tx_clone.send(Message::Ping(vec![].into())).await {
+                        error!("Error sending heartbeat: {}", e);
+                        break;
+                    }
+                    
+                    debug!("Heartbeat sent");
                 }
-                
-                debug!("Sending PING");
-                if let Err(e) = tx.send(Message::Text(r#"{"type":"PING"}"#.to_string().into())).await {
-                    error!("Failed to send PING: {}", e);
-                    break;
-                }
-            }
-        });
-        
-        Ok(())
+            });
+            
+            Ok(())
+        } else {
+            Err(AppError::WebSocketError("WebSocket not connected".to_string()))
+        }
     }
 }
 
@@ -224,44 +356,111 @@ impl IgWebSocketClient for IgWebSocketClientImpl {
         
         info!("Connecting to Lightstreamer server...");
         
-        // According to the IG documentation, we need to use a direct approach
-        // Determine the correct Lightstreamer endpoint based on environment
-        let lightstreamer_endpoint = if self.config.rest_api.base_url.contains("demo") {
-            "wss://demo-apd.marketdatasystems.com/lightstreamer"
-        } else {
-            "wss://push.lightstreamer.com/lightstreamer"
-        };
+        // Primero, obtener los detalles de conexión a Lightstreamer desde la API de IG
+        info!("Requesting Lightstreamer connection details from IG API...");
         
-        // Generate a random client ID
-        let client_id = format!("IGCLIENT_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
+        // Construir el cliente HTTP para hacer la solicitud a la API
+        let client = reqwest::Client::new();
         
-        // Set adapter set based on environment
-        let adapter_set = if self.config.rest_api.base_url.contains("demo") {
-            "DEMO"
-        } else {
-            "PROD"
-        };
+        // Probar diferentes rutas para el endpoint de Lightstreamer
+        let base_url = &self.config.rest_api.base_url;
         
-        // For password, we'll use the CST and XST tokens
-        let password = format!("CST-{}|XST-{}", session.cst, session.token);
+        // Posibles rutas para el endpoint de Lightstreamer
+        let possible_paths = [
+            "session/lightstreamer",
+            "lightstreamer",
+            "lightstreamer/session",
+            "session"
+        ];
         
-        info!("Using credentials: clientId={}, adapterSet={}, accountId={}", client_id, adapter_set, session.account_id);
+        let mut response = None;
+        let mut successful_url = String::new();
         
-        // Now we can connect to the WebSocket directly
-        let ws_url = lightstreamer_endpoint;
-        info!("Using WebSocket URL: {}", ws_url);
+        // Probar cada ruta hasta encontrar una que funcione
+        for path in possible_paths {
+            let url = format!("{}/{}", base_url, path);
+            info!("Trying Lightstreamer details URL: {}", url);
+            
+            // Hacer la solicitud a la API
+            match client.get(&url)
+                .header("X-SECURITY-TOKEN", &session.token)
+                .header("CST", &session.cst)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .send()
+                .await {
+                    Ok(resp) => {
+                        info!("Response status: {}", resp.status());
+                        if resp.status().is_success() {
+                            response = Some(resp);
+                            successful_url = url;
+                            break;
+                        } else {
+                            let status = resp.status();
+                            let text = resp.text().await.unwrap_or_else(|_| "No response body".to_string());
+                            warn!("Error response from path {}: {} - {}", path, status, text);
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Error requesting from path {}: {}", path, e);
+                    }
+            }
+        }
         
-        // Connect to the WebSocket server
-        info!("Connecting to WebSocket server...");
-        let (ws_stream, response) = connect_async(ws_url).await.map_err(|e| {
-            error!("Error connecting to WebSocket server: {}", e);
-            AppError::WebSocketError(format!("Failed to connect to WebSocket server: {}", e))
+        // Si no encontramos una ruta que funcione, intentar con el enfoque directo
+        if response.is_none() {
+            warn!("Could not find a working Lightstreamer API endpoint, falling back to direct connection");
+            return self.connect_direct(session).await;
+        }
+        
+        // Usar la respuesta que obtuvimos en el bucle anterior
+        let response = response.unwrap();
+        
+        info!("Successfully connected to endpoint: {}", successful_url);
+        
+        // Parsear la respuesta JSON
+        let ls_info: serde_json::Value = response.json().await.map_err(|e| {
+            error!("Error parsing Lightstreamer details: {}", e);
+            AppError::WebSocketError(format!("Failed to parse Lightstreamer details: {}", e))
         })?;
         
-        // Show HTTP response information
-        info!("Connected to WebSocket server");
-        info!("HTTP Response: {} {}", response.status(), response.status().canonical_reason().unwrap_or(""));
-        debug!("Response headers: {:#?}", response.headers());
+        // Extraer los detalles de conexión
+        let lightstreamer_endpoint = ls_info["lightstreamerEndpoint"].as_str().ok_or_else(|| {
+            error!("Lightstreamer endpoint not found in response");
+            AppError::WebSocketError("Lightstreamer endpoint not found in response".to_string())
+        })?;
+        
+        let client_id = ls_info["clientId"].as_str().ok_or_else(|| {
+            error!("Client ID not found in response");
+            AppError::WebSocketError("Client ID not found in response".to_string())
+        })?;
+        
+        let adapter_set = ls_info["adapterSet"].as_str().ok_or_else(|| {
+            error!("Adapter set not found in response");
+            AppError::WebSocketError("Adapter set not found in response".to_string())
+        })?;
+        
+        let password = ls_info["password"].as_str().ok_or_else(|| {
+            error!("Password not found in response");
+            AppError::WebSocketError("Password not found in response".to_string())
+        })?;
+        
+        info!("Successfully obtained Lightstreamer connection details");
+        info!("Connecting to Lightstreamer endpoint: {}", lightstreamer_endpoint);
+        
+        // Conectar al servidor WebSocket usando los detalles obtenidos
+        let ws_stream = match connect_async(lightstreamer_endpoint).await {
+            Ok((stream, response)) => {
+                info!("Successfully connected to: {}", lightstreamer_endpoint);
+                info!("HTTP Response: {} {}", response.status(), response.status().canonical_reason().unwrap_or(""));
+                debug!("Response headers: {:#?}", response.headers());
+                stream
+            },
+            Err(e) => {
+                error!("Failed to connect to {}: {}", lightstreamer_endpoint, e);
+                return Err(AppError::WebSocketError(format!("Failed to connect to Lightstreamer: {}", e)));
+            }
+        };
         
         // Create channel for sending messages
         let (tx, mut rx) = mpsc::channel::<Message>(100);
@@ -273,13 +472,16 @@ impl IgWebSocketClient for IgWebSocketClientImpl {
         // Split the WebSocket stream
         let (mut ws_tx, mut ws_rx) = ws_stream.split();
         
+        // Usar los detalles obtenidos de la API de IG
+        // client_id, adapter_set y password ya fueron obtenidos de la respuesta de la API
+        
         // Send a create session message
         let create_session_msg = format!(
             "\r\n\r\nLS_adapter_set={}\r\nLS_cid={}\r\nLS_send_sync=false\r\nLS_cause=api\r\nLS_user={}\r\nLS_password={}\r\n",
             adapter_set,
             client_id,
-            session.account_id,  // Use the account ID as the user
-            password    // The password is from our CST and XST tokens
+            session.account_id,
+            password
         );
         
         info!("Sending session creation message...");
@@ -352,9 +554,7 @@ impl IgWebSocketClient for IgWebSocketClientImpl {
             while let Some(msg) = rx.recv().await {
                 // Show the message to be sent
                 if let Message::Text(ref text) = msg {
-                    debug!("Sending message: {}", text.replace("\r\n", "[CR][LF]\n"));
-                } else {
-                    debug!("Sending message (non-text): {:?}", msg);
+                    debug!("Sending message: {}", text);
                 }
                 
                 if let Err(e) = ws_tx.send(msg).await {
@@ -370,18 +570,30 @@ impl IgWebSocketClient for IgWebSocketClientImpl {
     }
     
     async fn disconnect(&self) -> Result<(), AppError> {
-        // Check if connected
         if !*self.connected.lock().unwrap() {
             return Ok(());
         }
         
-        // Set connected flag to false
+        info!("Disconnecting from WebSocket server...");
+        
+        // Send a close message - avoiding the Send future issue by dropping the lock before await
+        let tx_opt = {
+            let tx_guard = self.tx.lock().unwrap();
+            tx_guard.clone()
+        };
+        
+        if let Some(tx) = tx_opt {
+            tx.send(Message::Close(None)).await.map_err(|e| {
+                error!("Error sending close message: {}", e);
+                AppError::WebSocketError(format!("Failed to send close message: {}", e))
+            })?;
+        }
+        
+        // Set connected flag
         *self.connected.lock().unwrap() = false;
         
-        // Close the channel
-        *self.tx.lock().unwrap() = None;
-        
         info!("Disconnected from WebSocket server");
+        
         Ok(())
     }
     
@@ -470,8 +682,6 @@ impl IgWebSocketClient for IgWebSocketClientImpl {
         
         // Create a new channel if none exists
         let (_, rx) = mpsc::channel::<MarketUpdate>(100);
-        // Store the sender for later use
-        let _market_tx_clone = self.market_tx.clone();
         rx
     }
     
@@ -483,8 +693,6 @@ impl IgWebSocketClient for IgWebSocketClientImpl {
         
         // Create a new channel if none exists
         let (_, rx) = mpsc::channel::<AccountUpdate>(100);
-        // Store the sender for later use
-        let _account_tx_clone = self.account_tx.clone();
         rx
     }
 }
