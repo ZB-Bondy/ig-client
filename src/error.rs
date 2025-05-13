@@ -103,6 +103,8 @@ pub enum AppError {
     Unauthorized,
     NotFound,
     RateLimitExceeded,
+    SerializationError(String),
+    WebSocketError(String),
 }
 
 impl Display for AppError {
@@ -116,6 +118,8 @@ impl Display for AppError {
             AppError::Unauthorized  => write!(f, "unauthorized"),
             AppError::NotFound      => write!(f, "not found"),
             AppError::RateLimitExceeded => write!(f, "rate limit exceeded"),
+            AppError::SerializationError(s) => write!(f, "serialization error: {s}"),
+            AppError::WebSocketError(s) => write!(f, "websocket error: {s}"),
         }
     }
 }
