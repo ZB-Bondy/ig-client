@@ -40,7 +40,6 @@ impl IgWebSocketClientImpl {
         // Define the endpoints to try
         let endpoints = vec![
             "wss://apd.marketdatasystems.com/lightstreamer",
-            "wss://apd145f.marketdatasystems.com/lightstreamer",
             "wss://push.lightstreamer.com/lightstreamer"
         ];
         
